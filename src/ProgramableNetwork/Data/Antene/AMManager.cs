@@ -101,6 +101,19 @@ namespace ProgramableNetwork.Data.Antene
             if (receiverAntena == null)
                 return channels;
 
+            // Include own antenna's local channels (e.g. from WorldMapMine redirects)
+            if (receiverAntena.DataBand is AMDataBand ownDataBand)
+            {
+                foreach (AMDataBandChannel ownChannel in ownDataBand.ActiveChannels)
+                {
+                    if (ownChannel.ValidIterations < 1)
+                        continue;
+
+                    distances[ownChannel.Index] = Fix32.Zero;
+                    channels[ownChannel.Index] = (Fix32.One, ownChannel, receiverAntena);
+                }
+            }
+
             Tile3i receiverPosition = receiverAntena.Position3f.Tile3i;
 
             foreach ((Tile3i tile, Antena broadcaster) in m_antenas)
