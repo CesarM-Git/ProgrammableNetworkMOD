@@ -37,7 +37,7 @@ namespace ProgramableNetwork
             registrator.PrototypesDb.Add(DataBandProto.Create<FMDataBand, FMDataBandChannel>(
                 id: DataBand_FM,
                 strings: Proto.CreateStr(DataBand_FM, "FM", "Standard Frquency Modulated signal used in classic radios. The channels are from 85.5 to 108.0 MHz and steping by 500 kHz (total 45 channels)." +
-                "\nDefault redirection distance is 2 km, Antena tower may extend it.\nSignal is read always from closest antena.", "Commonly known radio signal description"),
+                "\nDefault redirection distance is 1 km, Antena tower may extend it.\nSignal is read always from closest antena.", "Commonly known radio signal description"),
                 (antena, context, proto) => new FMDataBand(antena, context, proto),
                 channels: 45,
                 (c0, c1) => c0.Index != c1.Index,
@@ -45,12 +45,12 @@ namespace ProgramableNetwork
                 FMDataBand.Deserialize,
                 channelDisplay: (c, i) => ((171 + i.Index).ToFix32() * 0.5f.ToFix32()).ToStringRounded(1) + " MHz",
                 buttons: (inspector, dataBand) => new Ui.DataBand.FMDataBandChannelView(inspector, dataBand),
-                distance: 2000.ToFix32()
+                distance: 1000.ToFix32()
                 ));
 
             registrator.PrototypesDb.Add(DataBandProto.Create<AMDataBand, AMDataBandChannel>(
                 id: DataBand_AM,
-                strings: Proto.CreateStr(DataBand_AM, "AM", "Standard Amplitude Modulated signal used in long range radios. The channels are from 530 to 1700 kHz and steping by 10 kHz (total 118 channels), default redirection distance is 800 km, Antena tower may extend it", "Commonly known radio signal description"),
+                strings: Proto.CreateStr(DataBand_AM, "AM", "Standard Amplitude Modulated signal used in long range radios. The channels are from 530 to 1700 kHz and steping by 10 kHz (total 118 channels), default redirection distance is 1000 km, Antena tower may extend it", "Commonly known radio signal description"),
                 (antena, context, proto) => new AMDataBand(antena, context, proto),
                 channels: 118,
                 (c0, c1) => c0.Index != c1.Index,
@@ -58,7 +58,7 @@ namespace ProgramableNetwork
                 AMDataBand.Deserialize,
                 channelDisplay: (c, i) => ((53 + i.Index).ToFix32() * 10.ToFix32()).IntegerPart + " kHz",
                 buttons: (inspector, dataBand) => new Ui.DataBand.AMDataBandChannelView(inspector, dataBand),
-                distance: 800.ToFix32()
+                distance: 1000.ToFix32()
                 ));
         }
     }
