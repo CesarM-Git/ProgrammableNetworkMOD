@@ -1,4 +1,4 @@
-﻿using Mafi;
+using Mafi;
 using Mafi.Core;
 using Mafi.Core.Entities;
 using Mafi.Core.World;

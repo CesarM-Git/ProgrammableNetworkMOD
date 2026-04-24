@@ -31,6 +31,8 @@ namespace ProgramableNetwork
         {
         }
 
+        public Lyst<AMDataBandChannel> ActiveChannels => m_active;
+
         public Antena Antena { get; set; }
 
         public DataBandProto Prototype

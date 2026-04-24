@@ -2634,10 +2634,16 @@ public class Modules : ModuleGroup, IModuleGroup {
 			// dynamic
 			.Action((Module m) => {
 				Antena entity = m.Field.Entity<Antena>("antena");
-				if ((entity?.DataBand is AMDataBand am))
-				// TODO generate noise or read data
+				if (entity != null && entity.DataBand is AMDataBand)
 				{
-					m.Output["am"] = am.Read(m.Field["am", Fix32.Zero].IntegerPart, Fix32.Zero);
+					if (!entity.IsEnabled || entity.IsPaused) {
+						m.Output["am"] = Fix32.Zero;
+						return;
+					}
+
+					AMManager amManager = GlobalDependencyResolver.Get<AMManager>();
+					int channelIdx = m.Field.Integer["am"];
+					m.Output["am"] = amManager.Signal(entity, channelIdx);
 				} else {
 					m.SetError("No antena connected");
 					m.Output["am"] = Fix32.Zero;
@@ -2645,10 +2651,13 @@ public class Modules : ModuleGroup, IModuleGroup {
 			})
 			.Display((Module m) => {
 				Antena entity = m.Field.Entity<Antena>("antena");
-				if ((entity?.DataBand is AMDataBand am))
-				// TODO generate noise or read data
+				if (entity != null && entity.DataBand is AMDataBand)
 				{
-					// signal value
+					if (!entity.IsEnabled) {
+						m.Display["am"] = "OFF";
+						return;
+					}
+
 					int value = m.Field.Integer["am"];
 					Fix32 displayValue = (53 + value).ToFix32() * 10f.ToFix32();
 					m.Display["am"] = displayValue.ToStringRounded(0);
