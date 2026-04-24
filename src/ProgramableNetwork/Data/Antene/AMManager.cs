@@ -88,6 +88,56 @@ namespace ProgramableNetwork.Data.Antene
             return bestValue;
         }
 
+        /// <summary>
+        /// Returns all active AM signals visible from the given antenna's position.
+        /// For each channel index with an active signal, returns the closest broadcaster's
+        /// signal strength and channel data.
+        /// </summary>
+        public Dictionary<int, (Fix32 signalStrength, AMDataBandChannel channelInfo, Antena source)> Signals(Antena receiverAntena)
+        {
+            var distances = new Dictionary<int, Fix32>();
+            var channels = new Dictionary<int, (Fix32, AMDataBandChannel, Antena)>();
+
+            if (receiverAntena == null)
+                return channels;
+
+            Tile3i receiverPosition = receiverAntena.Position3f.Tile3i;
+
+            foreach ((Tile3i tile, Antena broadcaster) in m_antenas)
+            {
+                if (broadcaster == receiverAntena)
+                    continue;
+
+                if (broadcaster.DataBand is not AMDataBand dataBand)
+                    continue;
+
+                if (broadcaster.IsNotEnabled || broadcaster.IsPaused)
+                    continue;
+
+                Fix32 distance = (tile.ToCenterVector3() - receiverPosition.ToCenterVector3()).magnitude.ToFix32();
+                Fix32 maxDistance = AM_BROADCAST_RANGE * broadcaster.Prototype.DistanceBoost;
+
+                if (distance > maxDistance)
+                    continue;
+
+                Fix32 strength = Fix32.One - (distance / maxDistance);
+
+                foreach (AMDataBandChannel channel in dataBand.ActiveChannels)
+                {
+                    if (channel.ValidIterations < 1)
+                        continue;
+
+                    if (distances.TryGetValue(channel.Index, out Fix32 existing) && existing <= distance)
+                        continue;
+
+                    distances[channel.Index] = distance;
+                    channels[channel.Index] = (strength, channel, broadcaster);
+                }
+            }
+
+            return channels;
+        }
+
         private void OnAdded(IEntity entity)
         {
             if (entity is Antena antena)

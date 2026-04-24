@@ -35,6 +35,9 @@ namespace ProgramableNetwork.Ui
 		private PanelWithHeader m_fmSignalPanel;
 		private ScrollColumn m_fmSignalList;
 		private readonly FMManager m_fmManager;
+		private PanelWithHeader m_amSignalPanel;
+		private ScrollColumn m_amSignalList;
+		private readonly AMManager m_amManager;
 
 		public AntenaInspector(
 			UiContext context,
@@ -43,6 +46,7 @@ namespace ProgramableNetwork.Ui
 			ShortcutsManager shortcutsManager,
 			CameraController cameraController,
 			FMManager fmManager,
+			AMManager amManager,
 			//TerrainCursor terrainCursor,
 			NewInstanceOf<EntityHighlighter> entityHighlighter,
 			NewInstanceOf<EntityHighlighter> entityHighlighterSelectable
@@ -57,6 +61,7 @@ namespace ProgramableNetwork.Ui
 			CameraController = cameraController;
 			m_invalidOpSound = Context.AudioDb.InvalidOp();
 			m_fmManager = fmManager;
+			m_amManager = amManager;
 
 			AddBandDisplay();
 		}
@@ -220,6 +225,40 @@ namespace ProgramableNetwork.Ui
 						FMDataBandChannelEntry entry = (FMDataBandChannelEntry)m_fmSignalList[i];
 						KeyValuePair<int, (Fix32, FMDataBandChannel)> signal = entries[i];
 						entry.DataBand(signal.Value.Item2)
+							.Channel(signal.Key)
+							.Strength(signal.Value.Item1);
+					}
+				});
+
+			// AM signal panel
+			m_amSignalPanel = AddPanelWithHeader();
+			m_amSignalPanel.Header.Add(new UiComponent().FlexGrow(1));
+			m_amSignalPanel.Header.Add(new Label("Received signals".ToDoLoc()));
+			m_amSignalPanel.Header.Add(new UiComponent().FlexGrow(1));
+			m_amSignalPanel.ObserveVisible(this, () => Entity.DataBand is AMDataBand);
+			m_amSignalList = m_amSignalPanel.Body.AddAndReturn(new ScrollColumn());
+			m_amSignalList.Gap(5.px());
+			m_amSignalList.MaxHeight(400.px());
+			m_amSignalList.MinHeight(100.px());
+
+			m_amSignalPanel.ObserveEnumerable(() => m_amManager.Signals(Entity))
+				.Do(entries => {
+					if (m_amSignalList.ChildrenCount != entries.Count) {
+						if (m_amSignalList.ChildrenCount > entries.Count) {
+							for (int i = m_amSignalList.ChildrenCount - 1; i >= entries.Count; i--) {
+								((AMDataBandChannelEntry)m_amSignalList[i]).RemoveFromHierarchy();
+							}
+						} else if (m_amSignalList.ChildrenCount < entries.Count) {
+							for (int i = m_amSignalList.ChildrenCount; i < entries.Count; i++) {
+								m_amSignalList.AddCached<AMDataBandChannelEntry>();
+							}
+						}
+					}
+
+					for (int i = 0; i < entries.Count; i++) {
+						AMDataBandChannelEntry entry = (AMDataBandChannelEntry)m_amSignalList[i];
+						KeyValuePair<int, (Fix32, AMDataBandChannel, Antena)> signal = entries[i];
+						entry.SetData(signal.Value.Item2, signal.Value.Item3)
 							.Channel(signal.Key)
 							.Strength(signal.Value.Item1);
 					}
@@ -393,6 +432,86 @@ namespace ProgramableNetwork.Ui
 			ColorRgba color = signalLevel switch {
 				0 => ColorRgba.Red,
 				1 => ColorRgba.FromHex("FF4500"), // OrangeRed
+				2 => ColorRgba.Orange,
+				3 => ColorRgba.Yellow,
+				4 => ColorRgba.GreenYellow,
+				5 => ColorRgba.Green,
+				_ => ColorRgba.White
+			};
+			m_strength.TextColor(color);
+			return this;
+		}
+
+		protected override void OnDetached() {
+			base.OnDetached();
+			m_highlighter.ClearAllHighlights();
+		}
+	}
+
+	public class AMDataBandChannelEntry : Row {
+
+		private AMDataBandChannel m_channel;
+		private Antena m_sourceAntena;
+		private readonly Display m_frequency;
+		private readonly Display m_strength;
+		private readonly Display m_value;
+		private readonly ButtonIcon m_gotoButton;
+
+		private readonly EntityHighlighter m_highlighter;
+		private readonly CameraController m_cameraController;
+
+		public AMDataBandChannelEntry() {
+			m_cameraController = GlobalDependencyResolver.Get<CameraController>();
+			m_highlighter = GlobalDependencyResolver.Instantiate<EntityHighlighter>();
+
+			this.Height(24.px());
+			m_strength = AddAndReturn(new Display(".....".AsLoc())).Width(48.px());
+			m_strength.TextCenterMiddle();
+			m_frequency = AddAndReturn(new Display("530 kHz".AsLoc())).Width(80.px());
+			m_value = AddAndReturn(new Display("0".AsLoc())).Fill();
+			m_value.TextLeftMiddle();
+			m_value.ObserveValue(() =>
+				(m_channel?.Value?.ToStringRounded(2) ?? "N/A")
+				.AsLoc());
+			m_gotoButton = new ButtonIcon(Mafi.Unity.Assets.Unity.UserInterface.General.Search_svg)
+				.Height(24.px())
+				.OnClick(panToSourceAntenna);
+			m_gotoButton.OnMouseEnterLeave(highlight, clearHighlight);
+		}
+
+		private void panToSourceAntenna() {
+			if (m_sourceAntena != null)
+				m_cameraController.PanTo(m_sourceAntena.Position2f);
+		}
+
+		private void highlight() {
+			if (m_sourceAntena != null)
+				m_highlighter.HighlightOnly(m_sourceAntena, ColorRgba.Cyan);
+		}
+
+		private void clearHighlight() {
+			m_highlighter.ClearAllHighlights();
+		}
+
+		public AMDataBandChannelEntry SetData(AMDataBandChannel channel, Antena source) {
+			m_channel = channel;
+			m_sourceAntena = source;
+			return this;
+		}
+
+		public AMDataBandChannelEntry Channel(int channelIndex) {
+			m_frequency.Value((((53 + channelIndex) * 10) + " kHz").AsLoc());
+			return this;
+		}
+
+		public AMDataBandChannelEntry Strength(Fix32 signalStrength) {
+			int signalLevel = (signalStrength * 5).IntegerPart;
+			m_strength.Value((new string('|', signalLevel)
+				+ new string('.', 5 - signalLevel)).AsLoc());
+
+			ColorRgba color = signalLevel switch {
+				0 => ColorRgba.Red,
+				1 => ColorRgba.FromHex("FF4500"),
 				2 => ColorRgba.Orange,
 				3 => ColorRgba.Yellow,
 				4 => ColorRgba.GreenYellow,
