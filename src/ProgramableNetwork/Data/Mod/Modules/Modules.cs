@@ -2634,15 +2634,24 @@ public class Modules : ModuleGroup, IModuleGroup {
 			// dynamic
 			.Action((Module m) => {
 				Antena entity = m.Field.Entity<Antena>("antena");
-				if (entity != null && entity.DataBand is AMDataBand)
+				if (entity != null && entity.DataBand is AMDataBand am)
 				{
 					if (!entity.IsEnabled || entity.IsPaused) {
 						m.Output["am"] = Fix32.Zero;
 						return;
 					}
 
-					AMManager amManager = GlobalDependencyResolver.Get<AMManager>();
 					int channelIdx = m.Field.Integer["am"];
+
+					// First check own antenna's local channels (e.g. from WorldMapMine redirects)
+					Fix32 localValue = am.Read(channelIdx, Fix32.Zero);
+					if (localValue != Fix32.Zero) {
+						m.Output["am"] = localValue;
+						return;
+					}
+
+					// Then check remote antennas via AMManager
+					AMManager amManager = GlobalDependencyResolver.Get<AMManager>();
 					m.Output["am"] = amManager.Signal(entity, channelIdx);
 				} else {
 					m.SetError("No antena connected");
