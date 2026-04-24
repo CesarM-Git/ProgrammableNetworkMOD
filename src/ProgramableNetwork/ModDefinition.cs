@@ -44,9 +44,6 @@ namespace ProgramableNetwork
 
             // Registers all research from this assembly. See ExampleResearchData.cs for examples.
             registrator.RegisterDataWithInterface<IResearchNodesData>();
-
-			ControllerProto.RegisterPhantom(registrator);
-			DisplayEntityProto.RegisterPhantom(registrator);
         }
     }
 
