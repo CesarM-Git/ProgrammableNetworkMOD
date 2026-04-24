@@ -19,6 +19,9 @@ Builds/
 Thumbs.db
 ehthumbs.db
 desktop.ini
+
+# macOS metadata
+.DS_Store
 /src/ProgramableNetwork/packages
 /src/ExampleMod.Unity/AssetBundles/AssetBundles*
 /src/ExampleMod.Unity/AssetBundles/*.manifest
