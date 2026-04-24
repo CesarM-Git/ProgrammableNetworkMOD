@@ -14,8 +14,8 @@
     <Deterministic>true</Deterministic>
     <TargetFrameworkProfile />
     <LangVersion>latest</LangVersion>
-    <COI_ROOT>C:\git\Game\bin</COI_ROOT>
-    <COI_APPDATA>%25APPDATA%25\Captain of Industry - 0.8.0</COI_APPDATA>
+    <!-- COI_ROOT must be set as an environment variable -->
+    <!-- COI_APPDATA must be set as an environment variable -->
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
