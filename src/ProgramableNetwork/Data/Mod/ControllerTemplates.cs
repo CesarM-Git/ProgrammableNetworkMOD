@@ -197,6 +197,7 @@ The controller can use maintenance from T1 to T3 base on layout of the modules:
             Module module = new Module(storageProto, controller.Context, controller);
 
             controller.Modules.Add(module);
+            controller.InvalidateModuleLookup();
             controller.Rows[row][column++] = ModulePlacement.Origin(module.Id);
             int width = module.Layout.GetWidth(module);
             for (int j = 1; j < width; j++) {

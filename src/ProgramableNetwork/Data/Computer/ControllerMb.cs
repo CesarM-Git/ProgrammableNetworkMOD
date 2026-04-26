@@ -105,6 +105,16 @@ namespace ProgramableNetwork.Data.Computer
         {
             private readonly ImmutableArray<MeshRenderer> m_renderers = renderers;
 
+            // FIX: Cache a single MaterialPropertyBlock per Colorizer instance.
+            // Previously, a new MaterialPropertyBlock was allocated inside the loop
+            // for every renderer on every frame that the color changed. With multiple
+            // controllers visible, this created hundreds of short-lived heap objects
+            // per second, causing severe GC pressure and contributing to OOM over
+            // long sessions (~72 GB in 2 hrs). Reusing one block is safe because
+            // SetPropertyBlock copies the data into the renderer — the block can be
+            // reused immediately.
+            private readonly MaterialPropertyBlock m_propertyBlock = new();
+
             public virtual void Colorize(ColorRgba color)
             {
                 UnityEngine.Color unityColor = color.SetA(255).ToColor();
@@ -112,9 +122,8 @@ namespace ProgramableNetwork.Data.Computer
                 {
                     try
                     {
-                        MaterialPropertyBlock materialPropertyBlock = new();
-                        materialPropertyBlock.SetColor("_Color", unityColor);
-                        render.SetPropertyBlock(materialPropertyBlock);
+                        m_propertyBlock.SetColor("_Color", unityColor);
+                        render.SetPropertyBlock(m_propertyBlock);
                     }
                     catch (Exception e)
                     {

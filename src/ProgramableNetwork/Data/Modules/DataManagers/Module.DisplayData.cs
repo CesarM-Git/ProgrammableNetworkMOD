@@ -13,7 +13,7 @@
 
             public string this[string name, string defaultValue]
             {
-                get => module.StringData.TryGetValue("display__" + name, out string data)
+                get => module.StringData.TryGetValue(PrefixedKeyCache.DisplayKey(name), out string data)
                     ? data ?? defaultValue : defaultValue;
             }
 
@@ -21,7 +21,7 @@
             {
                 set
                 {
-                    module.StringData["display__" + name] = value;
+                    module.StringData[PrefixedKeyCache.DisplayKey(name)] = value;
                 }
             }
         }

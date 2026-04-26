@@ -179,20 +179,20 @@ namespace ProgramableNetwork
 			{
 				foreach (IField item in this.Prototype.Fields)
 				{
-					if (item is not Ui.EntityField && NumberData.TryGetValue("field__" + item.Id, out var value))
+					if (item is not Ui.EntityField && NumberData.TryGetValue(PrefixedKeyCache.FieldKey(item.Id), out var value))
 					{
-						NumberData["field__" + item.Id] = value.ToFix32().RawValue;
+						NumberData[PrefixedKeyCache.FieldKey(item.Id)] = value.ToFix32().RawValue;
 					}
 				}
 				foreach (ModuleConnectorProto item in this.Prototype.Inputs)
 				{
-					if (NumberData.TryGetValue("in__" + item.Id, out var value)) {
+					if (NumberData.TryGetValue(PrefixedKeyCache.InputKey(item.Id), out var value)) {
 						Input[item.Id] = value.ToFix32().RawValue;
 					}
 				}
 				foreach (ModuleConnectorProto item in this.Prototype.Outputs)
 				{
-					if (NumberData.TryGetValue("out__" + item.Id, out var value)) {
+					if (NumberData.TryGetValue(PrefixedKeyCache.OutputKey(item.Id), out var value)) {
 						Output.Integer[item.Id] = value.ToFix32().RawValue;
 					}
 				}

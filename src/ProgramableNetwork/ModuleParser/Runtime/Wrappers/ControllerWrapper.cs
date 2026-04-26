@@ -69,6 +69,7 @@ namespace ProgramableNetwork.Python
                 .ValueOrThrow("Missing module");
             Module module = new Module(proto, controller.Context, controller);
             controller.Modules.Add(module);
+            controller.InvalidateModuleLookup();
             Thread.Sleep(1);
 
             int width = module.Layout.GetWidth(module);

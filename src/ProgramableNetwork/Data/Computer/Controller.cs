@@ -127,6 +127,7 @@ namespace ProgramableNetwork
 			{
 				this.Modules.Clear();
 				this.Modules.AddRange(newModules?.AsEnumerable());
+				InvalidateModuleLookup();
 				foreach (Module module in this.Modules)
 				{
 					module.Context = Context;
@@ -335,6 +336,7 @@ namespace ProgramableNetwork
 			}
 
 			Modules = Lyst<Module>.Deserialize(reader);
+			InvalidateModuleLookup();
 			Rows = Lyst<Lyst<ModulePlacement>>.Deserialize(reader);
 
 			Log.Info($"Deserialized with {Modules.Count} modules and {Rows.Count} rows");
@@ -445,9 +447,14 @@ namespace ProgramableNetwork
 			ComputingRequired = requiredComputingPower;
 			m_computingConsumer.OnComputingRequiredChanged();
 
+			// FIX: Replaced Modules.Select().Sum() LINQ with direct loop to
+			// avoid iterator allocation on every SimUpdate tick.
 			float slotsMaintenance = 0.01f / Prototype.Columns;
+			int totalWidth = 0;
+			foreach (Module m in Modules)
+				totalWidth += m.Layout.GetWidth(m);
 			PartialQuantity quantity = new PartialQuantity(
-					(Modules.Select(m => m.Layout.GetWidth(m)).Sum() * slotsMaintenance + 0.01f).ToFix32());
+					(totalWidth * slotsMaintenance + 0.01f).ToFix32());
 
 			VirtualProductProto lastMaintenanceProduct = Maintenance.Costs.Product;
 			VirtualProductProto maintenanceProduct
@@ -493,12 +500,16 @@ namespace ProgramableNetwork
 
 		private Electricity GetRequiredRunningPower()
 		{
-			var total = Modules
-				.ToArray()
-				.Where(m => m.IsNotPaused())
-				.Where(m => !(m.Prototype is null))
-				.Select(m => m.Prototype.UsedPower.Value)
-				.Sum();
+			// FIX: Replaced Modules.ToArray().Where().Select().Sum() LINQ chain
+			// with a simple foreach loop. The original allocated a temporary array
+			// copy of Modules plus multiple LINQ iterator objects on every SimUpdate
+			// tick. This runs at ~60 Hz per controller.
+			int total = 0;
+			foreach (Module m in Modules)
+			{
+				if (m.IsNotPaused() && m.Prototype != null)
+					total += m.Prototype.UsedPower.Value;
+			}
 
 			if (Speed == 0) {
 				return total.Kw();
@@ -529,18 +540,24 @@ namespace ProgramableNetwork
 		{
 			// This will run the "compiled tree" per tick
 			// the tree is recompiled when edited only or when construct
-			Dictionary<long, Module> cache = Modules.ToDictionary(m => m.Id);
+			// FIX: Use cached lookup instead of Modules.ToDictionary() per tick.
+			Dictionary<long, Module> cache = GetModuleLookup();
 
 			// Copy all outputs to inputs
 			foreach (Module module in Modules)
 			{
 				foreach (var input in module.Prototype.Inputs)
 				{
-					module.NumberData.TryRemove("in__" + input.Id, out _);
+					module.NumberData.TryRemove(PrefixedKeyCache.InputKey(input.Id), out _);
 					// module.StringData.TryRemove("in__" + input.Id, out _);
 				}
 
-				foreach (KeyValuePair<string, ModuleConnector> item in module.InputModules.ToArray())
+				// FIX: Collect keys-to-remove in a reusable list instead of
+				// calling .ToArray() on InputModules every tick per module.
+				// The .ToArray() was necessary to allow Remove() during iteration,
+				// but we can defer removals to avoid the array allocation.
+				List<string> keysToRemove = null;
+				foreach (KeyValuePair<string, ModuleConnector> item in module.InputModules)
 				{
 					if (cache.TryGetValue(item.Value.ModuleId, out Module connected))
 					{
@@ -548,10 +565,16 @@ namespace ProgramableNetwork
 					}
 					else
 					{
-						// Remove disconnected module
-						module.InputModules.Remove(item.Key);
+						// Defer removal — can't modify collection during enumeration
+						keysToRemove ??= new List<string>(2);
+						keysToRemove.Add(item.Key);
 						module.Input[item.Key] = Fix32.Zero;
 					}
+				}
+				if (keysToRemove != null)
+				{
+					foreach (string key in keysToRemove)
+						module.InputModules.Remove(key);
 				}
 			}
 
@@ -628,6 +651,45 @@ namespace ProgramableNetwork
 
 		[DoNotSave()]
 		public Lyst<Module> Modules { get; private set; }
+
+		// FIX: Cached module-ID-to-Module lookup, rebuilt only when the module
+		// list actually changes (add/remove/clear). Previously, UpdateModules()
+		// called Modules.ToDictionary() on every sim tick, allocating a new
+		// Dictionary<long, Module> + all its internal arrays each time. With N
+		// controllers × T ticks/sec this was one of the largest sources of GC
+		// pressure leading to OOM.
+		[DoNotSave()]
+		private Dictionary<long, Module> m_moduleLookupCache;
+		[DoNotSave()]
+		private int m_moduleLookupVersion = -1;
+		[DoNotSave()]
+		private int m_moduleListVersion;
+
+		/// <summary>
+		/// Call this whenever the Modules list is structurally modified
+		/// (add, remove, clear, reorder) to invalidate the cached lookup.
+		/// </summary>
+		public void InvalidateModuleLookup()
+		{
+			m_moduleListVersion++;
+		}
+
+		private Dictionary<long, Module> GetModuleLookup()
+		{
+			if (m_moduleLookupCache == null || m_moduleLookupVersion != m_moduleListVersion)
+			{
+				if (m_moduleLookupCache == null)
+					m_moduleLookupCache = new Dictionary<long, Module>(Modules.Count);
+				else
+					m_moduleLookupCache.Clear();
+
+				foreach (Module m in Modules)
+					m_moduleLookupCache[m.Id] = m;
+
+				m_moduleLookupVersion = m_moduleListVersion;
+			}
+			return m_moduleLookupCache;
+		}
 
 		[DoNotSave()]
 		public Lyst<Lyst<ModulePlacement>> Rows { get; private set; }

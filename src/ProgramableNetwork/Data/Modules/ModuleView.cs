@@ -563,6 +563,7 @@ namespace ProgramableNetwork.Ui
 
 			// remove module
 			Entity.Modules.RemoveFirst(m => m.Id == module.Id);
+			Entity.InvalidateModuleLookup();
 
 			// remove placements
 			for (int i = 0; i < Entity.Rows.Count; i++)

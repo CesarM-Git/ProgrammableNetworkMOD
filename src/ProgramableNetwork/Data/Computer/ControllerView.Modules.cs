@@ -401,6 +401,7 @@ namespace ProgramableNetwork.Ui
 				}
 				row[targetColumn] = (module.Id, true);
 				Entity.Modules.Add(module);
+				Entity.InvalidateModuleLookup();
 				m_lastCreated = module;
 				return true;
 			}
