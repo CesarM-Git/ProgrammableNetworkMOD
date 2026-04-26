@@ -151,7 +151,7 @@ namespace ProgramableNetwork
 			StringData = Dict<string, string>.Deserialize(reader);
 			InputModules = Dict<string, ModuleConnector>.Deserialize(reader);
 
-			Log.Info($"[Programable Network] Instance (deserialization): {GetHashCode()}({Id}), version: {loadedVersion}");
+			// Log.Info($"[Programable Network] Instance (deserialization): {GetHashCode()}({Id}), version: {loadedVersion}");
 		}
 
 		[InitAfterLoad(InitPriority.High)]
@@ -159,7 +159,7 @@ namespace ProgramableNetwork
 		public void initContexts(int saveVersion)
 		{
 			Option<ModuleProto> Prototype = Context.ProtosDb.Get<ModuleProto>(new ModuleProto.ID(m_protoId));
-			Log.Info($"[Programable Network] Instance (init): {GetHashCode()}({Id}), version: {loadedVersion}");
+			// Log.Info($"[Programable Network] Instance (init): {GetHashCode()}({Id}), version: {loadedVersion}");
 
 			if (Prototype.HasValue)
 			{

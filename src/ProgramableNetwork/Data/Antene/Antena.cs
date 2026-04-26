@@ -113,11 +113,11 @@ namespace ProgramableNetwork
             }
             else
             {
-                Log.Info($"Loaded DataBand type: {DataBand.GetType().FullName}");
+                // Log.Info($"Loaded DataBand type: {DataBand.GetType().FullName}");
                 DataBand = (DataBand as UnloadedDataBand).Deserialize(Context, saveVersion);
                 DataBand.Context = Context;
                 DataBand.initContext(this);
-                Log.Info($"Deserialized DataBand type: {DataBand.GetType().FullName}");
+                // Log.Info($"Deserialized DataBand type: {DataBand.GetType().FullName}");
             }
         }
 

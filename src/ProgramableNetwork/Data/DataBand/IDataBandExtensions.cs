@@ -18,7 +18,7 @@ namespace ProgramableNetwork
             dataBand.Prototype.Serializer(dataBand, subwriter);
             subwriter.FinalizeSerialization();
             var data = subwriter.ToArray().ToArray();
-            Log.Info($"Databand {dataBand.Prototype.Id.Value} was serialized with {data.Length} bytes");
+            // Log.Info($"Databand {dataBand.Prototype.Id.Value} was serialized with {data.Length} bytes");
             writer.WriteArray(data);
         }
 
@@ -26,7 +26,7 @@ namespace ProgramableNetwork
         {
             string protoId = reader.ReadString();
             byte[] data = reader.ReadArray<byte>();
-            Log.Info($"Databand {protoId} was loaded with {data.Length} bytes");
+            // Log.Info($"Databand {protoId} was loaded with {data.Length} bytes");
             return new UnloadedDataBand(protoId, data, null);
         }
     }

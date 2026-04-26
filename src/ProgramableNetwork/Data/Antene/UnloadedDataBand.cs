@@ -47,7 +47,7 @@ namespace ProgramableNetwork
             IDataBand dataBand = dataBandProto.Deserializer.Invoke(blobReader);
             blobReader.FinalizeLoading(Option.None);
 
-            Log.Info($"Databand {protoId} was deserialized");
+            // Log.Info($"Databand {protoId} was deserialized");
 
             return dataBand;
         }
