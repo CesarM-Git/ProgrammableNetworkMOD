@@ -40,7 +40,7 @@ class Runtime_Delay_1(Module):
 
         # Generate a name for the buffer storage, which is unique to the count.
         # The simplest approach is to convert the int to a string.
-        buffer_name = unicode(count)
+        buffer_name = f"{count}"
 
         # Here it gets more complicated to follow what goes on.
         # The buffer is put on output and then input is put into the same buffer.
@@ -49,6 +49,7 @@ class Runtime_Delay_1(Module):
         # The difference being that here we don't have to worry about all the other values.
         self.Output.set("output", self.Output.get(buffer_name, Fix32.Zero))
         self.Output.set(buffer_name, input)
+        self.Output.set_int("count", count + 1)
 
 
 class Runtime_Delay_2(Module):
