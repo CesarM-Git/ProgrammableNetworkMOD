@@ -27,14 +27,14 @@ namespace ProgramableNetwork.Data.Speaker
             Dropdown<KeyValuePair<string, LocStrFormatted>> dropdown;
             Slider volume;
             AddPanelRow(
-                new Label("Active".AsLoc()).TextAlign(TextAlignment.LeftMiddle)
+                new Label().LaterText(() => NewTr.Inspector.Active, this).TextAlign(TextAlignment.LeftMiddle)
                 .FlexGrow(0.4f),
                 toggle = new Toggle().FlexGrow(0.1f),
                 dropdown = new Dropdown<KeyValuePair<string, LocStrFormatted>>(
                     optionViewFactory: (option, index, isInDropdown) => new Label(option.Value)
                 )
                 .OnValueChanged((v, i) => { Entity.SetSound(v.Key ?? UserInterface.Audio.ShipAlarm_prefab); })
-                .SetOptions(Sounds)
+                .SetOptions(BuildSounds())
                 .FlexGrow(0.5f),
                 volume = new Slider().FlexGrow(1)
             );
@@ -78,27 +78,27 @@ namespace ProgramableNetwork.Data.Speaker
             EmbedStatusToTheTop();
         }
 
-        /// <summary>
-        /// TODO: add possibility to define custom sound, by any kind of prototype
-        /// </summary>
-        public static ImmutableArray<KeyValuePair<string, LocStrFormatted>> Sounds { get; }
-            = new KeyValuePair<string, LocStrFormatted>[]
+        // Built lazily so the LocStr → LocStrFormatted conversions happen after ModTranslations.Load
+        // has spliced/rebound translations. A static initializer would freeze English text if the
+        // class cctor fires before rebind.
+        public static ImmutableArray<KeyValuePair<string, LocStrFormatted>> BuildSounds()
+            => new KeyValuePair<string, LocStrFormatted>[]
             {
                     new KeyValuePair<string, LocStrFormatted>(
                         UserInterface.Audio.ShipAlarm_prefab,
-                        "Alarm".AsLoc()
+                        NewTr.Inspector.Sound_Alarm
                     ),
                     new KeyValuePair<string, LocStrFormatted>(
                         UserInterface.Audio.MoneyAction_prefab,
-                        "Cash".AsLoc()
+                        NewTr.Inspector.Sound_Cash
                     ),
                     new KeyValuePair<string, LocStrFormatted>(
                         UserInterface.Audio.TurretShot_prefab,
-                        "Shoot".AsLoc()
+                        NewTr.Inspector.Sound_Shoot
                     ),
                     new KeyValuePair<string, LocStrFormatted>(
                         UserInterface.Audio.NewMessage_prefab,
-                        "Message".AsLoc()
+                        NewTr.Inspector.Sound_Message
                     )
             }.ToImmutableArray();
     }

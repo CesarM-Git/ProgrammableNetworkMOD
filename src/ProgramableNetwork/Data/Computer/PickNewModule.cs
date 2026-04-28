@@ -64,7 +64,7 @@ public class PickNewModule : FloatingColumn {
 
 				foreach (Category category in item.Categories) {
 					if (!categoryDict.TryGetValue(category.Id, out ButtonText categoryButton)) {
-						categoryButton = new ButtonText(Button.ToggleGroup, category.Name.ToDoLoc())
+						categoryButton = new ButtonText(Button.ToggleGroup, category.Name)
 							.Toggleable()
 							.Selected();
 						categoryButton.OnDoubleClick((b) => {
@@ -103,23 +103,31 @@ public class PickNewModule : FloatingColumn {
 		ScrollColumn categoriesSelection = row.AddAndReturn(new ScrollColumn())
 			.Width(150.px())
 			.Height(600);
-		Button allButton = categoriesSelection.AddAndReturn(new ButtonText("All".ToDoLoc()));
+		Button allButton = categoriesSelection.AddAndReturn(new ButtonText(LocStrFormatted.Empty)
+			.LaterText<ButtonText>(() => NewTr.Inspector.All, this, (b, v) => b.Value(v)));
 		categoriesSelection.Add(new HorizontalDivider().Height(10.px()));
 		allButton.OnClick(() => {
 			foreach (ButtonText b in categoryDict.Values) {
 				b.Selected();
 			}
 		});
-		categoriesSelection.Add(categoryDict.OrderBy(i => categoryOrdering[i.Key].Name).Select(c => c.Value));
+		categoriesSelection.Add(categoryDict
+			.OrderBy(i => categoryOrdering[i.Key].Name.TranslatedString)
+			.Select(c => c.Value));
 
 		row.Add(new VerticalDivider().Width(10.px()));
 
+		// Vertical scrollbar takes 17 px (see ScrollBase.PreventResizeForScroller); add it so the
+		// rightmost module entries aren't clipped when the scroller is visible.
+		Px scrollerWidth = 17.px();
 		ScrollBoth modulesSelection = row.AddAndReturn(new ScrollBoth())
-			.Width(440.px())
+			.Width(Sizes.BLOCK_SIZE * 4 + 340.px() + scrollerWidth)
 			.Height(600);
 		modulesSelection.Add(buttonList);
 
 		this.Height(Px.Auto);
-		this.Width(600.px());
+		this.Width(Sizes.BLOCK_SIZE * 4 + 500.px() + scrollerWidth);
+		
+		Log.Info($"[PickNewModule] Created");
 	}
 }

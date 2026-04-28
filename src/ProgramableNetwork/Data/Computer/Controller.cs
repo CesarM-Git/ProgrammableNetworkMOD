@@ -551,7 +551,6 @@ namespace ProgramableNetwork
 					module.NumberData.TryRemove(PrefixedKeyCache.InputKey(input.Id), out _);
 					// module.StringData.TryRemove("in__" + input.Id, out _);
 				}
-
 				// FIX: Collect keys-to-remove in a reusable list instead of
 				// calling .ToArray() on InputModules every tick per module.
 				// The .ToArray() was necessary to allow Remove() during iteration,

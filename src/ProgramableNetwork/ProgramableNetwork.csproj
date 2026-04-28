@@ -306,6 +306,7 @@
 		<Assets Include="$(ProjectDir)Assets\**\*" />
 		<Modules Include="$(ProjectDir)..\ProgramableNetwork.Modules\Custom\**\*" />
 		<CoreAPI Include="$(ProjectDir)..\ProgramableNetwork.Modules\Core\**\*" />
+		<Translations Include="$(ProjectDir)Translations\**\*" />
 	</ItemGroup>
 
 	<!-- Sanitization -->
@@ -334,5 +335,6 @@
 		<Copy SourceFiles="@(Modules)" DestinationFolder="$(COI_MODS)\$(TargetName)\Modules\%(RecursiveDir)" />
 		<Copy SourceFiles="@(CoreAPI)" DestinationFolder="$(COI_MODS)\$(TargetName)\Modules\Core\%(RecursiveDir)" />
 		<Exec Command="pwsh -NoProfile -Command &quot;Compress-Archive -Path '$(COI_MODS)\$(TargetName)' -DestinationPath '$(COI_MODS)\$(TargetName)_$(ManifestVersion).zip' -Force&quot;" />
+		<Copy SourceFiles="@(Translations)" DestinationFolder="$(COI_MODS)\$(TargetName)\Translations\%(RecursiveDir)" />
 	</Target>
 </Project>
