@@ -43,8 +43,8 @@ namespace ProgramableNetwork.Ui {
 		public void Validate(Module module) {
 			EntityInfo entityData = null;
 			// FOR ONLY NEWLY CONSTRUCTED
-			module.NumberData.TryRemove(PrefixedKeyCache.FieldKey(Id), out _);
-			if (module.StringData.TryGetValue(PrefixedKeyCache.FieldKey(Id), out var value)) {
+			module.FieldNumberData.TryRemove(Id, out _);
+			if (module.StringData.TryGetValue("field__" + Id, out var value)) {
 				//Log.Info("Searching for entity in module by config: " + module.Id + " with key: " + Id);
 				entityData = JsonConvert.DeserializeObject<EntityInfo>(value);
 

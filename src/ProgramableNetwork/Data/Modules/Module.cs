@@ -131,7 +131,7 @@ namespace ProgramableNetwork
 
 			writer.WriteLong(Id);
 			writer.WriteString(m_protoId);
-			writer.WriteInt(/*Version*/ 3);
+			writer.WriteInt(/*Version*/ 4);
 			writer.WriteBool(IsPaused);
 			writer.WriteInt((int)Status);
 			Dict<string, int>.Serialize(NumberData, writer);
@@ -169,7 +169,7 @@ namespace ProgramableNetwork
 			StringData = Dict<string, string>.Deserialize(reader);
 			InputModules = Dict<string, ModuleConnector>.Deserialize(reader);
 
-			// Log.Info($"[Programable Network] Instance (deserialization): {GetHashCode()}({Id}), version: {loadedVersion}");
+			Log.Info($"[Programable Network] Instance (deserialization): {GetHashCode()}({Id}), version: {loadedVersion}");
 		}
 
 		[InitAfterLoad(InitPriority.High)]
@@ -177,7 +177,7 @@ namespace ProgramableNetwork
 		public void initContexts(int saveVersion)
 		{
 			Option<ModuleProto> Prototype = Context.ProtosDb.Get<ModuleProto>(new ModuleProto.ID(m_protoId));
-			// Log.Info($"[Programable Network] Instance (init): {GetHashCode()}({Id}), version: {loadedVersion}");
+			Log.Info($"[Programable Network] Instance (init): {GetHashCode()}({Id}), version: {loadedVersion}");
 
 			if (Prototype.HasValue)
 			{
@@ -197,45 +197,65 @@ namespace ProgramableNetwork
 			{
 				foreach (IField item in this.Prototype.Fields)
 				{
-					if (item is not Ui.EntityField && NumberData.TryGetValue(PrefixedKeyCache.FieldKey(item.Id), out var value))
+					if (item is not Ui.EntityField && NumberData.TryGetValue("field__" + item.Id, out var value))
 					{
-						NumberData[PrefixedKeyCache.FieldKey(item.Id)] = value.ToFix32().RawValue;
+						NumberData["field__" + item.Id] = value.ToFix32().RawValue;
 					}
 				}
 				foreach (ModuleConnectorProto item in this.Prototype.Inputs)
 				{
-					if (NumberData.TryGetValue(PrefixedKeyCache.InputKey(item.Id), out var value)) {
-						Input[item.Id] = value.ToFix32().RawValue;
+					if (NumberData.TryGetValue("in__" + item.Id, out var value)) {
+						NumberData["in__" + item.Id] = value.ToFix32().RawValue;
 					}
 				}
 				foreach (ModuleConnectorProto item in this.Prototype.Outputs)
 				{
-					if (NumberData.TryGetValue(PrefixedKeyCache.OutputKey(item.Id), out var value)) {
-						Output.Integer[item.Id] = value.ToFix32().RawValue;
+					if (NumberData.TryGetValue("out__" + item.Id, out var value)) {
+						NumberData["out__" + item.Id] = value.ToFix32().RawValue;
 					}
 				}
 			}
 
-			if (loadedVersion < 3)
+			// Migration: move prefixed keys from NumberData into separated dicts.
+			// Covers version < 3 (upstream never had separated dicts) AND version 3
+			// saves from our GC-optimized build where data managers wrote to NumberData
+			// via PrefixedKeyCache but the serializer already wrote empty separated dicts.
+			if (loadedVersion < 4)
 			{
 				var keysToRemove = new System.Collections.Generic.List<string>();
 				foreach (var kvp in NumberData)
 				{
 					if (kvp.Key.StartsWith("in__"))
 					{
-						InputNumberData[kvp.Key.Substring("in__".Length)] = Fix32.FromRaw(kvp.Value);
+						string bare = kvp.Key.Substring("in__".Length);
+						if (!InputNumberData.ContainsKey(bare))
+						{
+							InputNumberData[bare] = Fix32.FromRaw(kvp.Value);
+						}
 						keysToRemove.Add(kvp.Key);
 					}
 					else if (kvp.Key.StartsWith("out__"))
 					{
-						OutputNumberData[kvp.Key.Substring("out__".Length)] = Fix32.FromRaw(kvp.Value);
+						string bare = kvp.Key.Substring("out__".Length);
+						if (!OutputNumberData.ContainsKey(bare))
+						{
+							OutputNumberData[bare] = Fix32.FromRaw(kvp.Value);
+						}
 						keysToRemove.Add(kvp.Key);
 					}
 					else if (kvp.Key.StartsWith("field__"))
 					{
-						FieldNumberData[kvp.Key.Substring("field__".Length)] = Fix32.FromRaw(kvp.Value);
+						string bare = kvp.Key.Substring("field__".Length);
+						if (!FieldNumberData.ContainsKey(bare))
+						{
+							FieldNumberData[bare] = Fix32.FromRaw(kvp.Value);
+						}
 						keysToRemove.Add(kvp.Key);
 					}
+				}
+				if (keysToRemove.Count > 0)
+				{
+					Log.Info($"[Programable Network] Migration v{loadedVersion}->v4: migrated {keysToRemove.Count} prefixed keys from NumberData for module {Id} ({m_protoId})");
 				}
 				foreach (var k in keysToRemove)
 				{

@@ -1,4 +1,4 @@
-﻿using Mafi;
+using Mafi;
 using Mafi.Core.Products;
 
 namespace ProgramableNetwork
@@ -31,26 +31,27 @@ namespace ProgramableNetwork
 
             public Fix32 this[string name, Fix32 defaultValue]
             {
-                get => module.NumberData.TryGetValue(PrefixedKeyCache.OutputKey(name), out int data)
-                    ? Fix32.FromRaw(data) : defaultValue;
+                get => module.OutputNumberData.TryGetValue(name, out Fix32 data)
+                    ? data : defaultValue;
             }
 
             public Fix32 this[string name]
             {
                 get => this[name, Fix32.Zero];
-                set => module.NumberData[PrefixedKeyCache.OutputKey(name)] = value.RawValue;
+                set => module.OutputNumberData[name] = value;
             }
 
             public ProductProto Product(string name)
             {
-                module.NumberData.TryGetValue(PrefixedKeyCache.OutputKey(name), out int slimId);
+                module.OutputNumberData.TryGetValue(name, out Fix32 data);
+                int slimId = data.RawValue;
 
                 if (slimId == 0)
                 {
                     return null;
                 }
 
-                module.StringData.TryGetValue(PrefixedKeyCache.OutputKey(name), out string cache);
+                module.StringData.TryGetValue("out__" + name, out string cache);
                 if (!string.IsNullOrEmpty(cache))
                 { // try get entity by name and check slimId
                     Option<ProductProto> product = module.Context.ProtosDb.Get<ProductProto>(new Mafi.Core.Prototypes.Proto.ID(cache));
@@ -64,13 +65,13 @@ namespace ProgramableNetwork
                     Option<ProductProto> product = module.Context.ProtosDb.First<ProductProto>(p => p.SlimId.Value == slimId);
                     if (product.HasValue && product.Value.SlimId.Value == slimId)
                     {
-                        module.StringData[PrefixedKeyCache.OutputKey(name)] = product.Value.Id.Value;
+                        module.StringData["out__" + name] = product.Value.Id.Value;
                         return product.Value;
                     }
                 }
 
-                module.NumberData.TryRemove(PrefixedKeyCache.OutputKey(name), out slimId);
-                module.StringData.TryRemove(PrefixedKeyCache.OutputKey(name), out cache);
+                module.OutputNumberData.TryRemove(name, out _);
+                module.StringData.TryRemove("out__" + name, out cache);
                 return null;
             }
         }

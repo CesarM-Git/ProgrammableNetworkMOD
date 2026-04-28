@@ -36,8 +36,8 @@ namespace ProgramableNetwork.Ui {
 		}
 
 		public void Validate(Module module) {
-			if (module.StringData.TryGetValue(PrefixedKeyCache.FieldKey(Id), out var id)) {
-				FixSavedGames.ValidatePrototypeString(id, (value) => module.NumberData[PrefixedKeyCache.FieldKey(Id)] = value);
+			if (module.StringData.TryGetValue("field__" + Id, out var id)) {
+				FixSavedGames.ValidatePrototypeString(id, (value) => module.FieldNumberData[Id] = Mafi.Fix32.FromRaw(value));
 			}
 		}
 	}

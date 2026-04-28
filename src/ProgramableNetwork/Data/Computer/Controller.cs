@@ -548,7 +548,7 @@ namespace ProgramableNetwork
 			{
 				foreach (var input in module.Prototype.Inputs)
 				{
-					module.NumberData.TryRemove(PrefixedKeyCache.InputKey(input.Id), out _);
+					module.InputNumberData.TryRemove(input.Id, out _);
 					// module.StringData.TryRemove("in__" + input.Id, out _);
 				}
 				// FIX: Collect keys-to-remove in a reusable list instead of
