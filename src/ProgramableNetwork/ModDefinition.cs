@@ -35,7 +35,10 @@ namespace ProgramableNetwork
 			registrator.PrototypesDb.RegisterPhantom(ModuleProto.Phantom);
 
             // Register all prototypes here.
+
+			// Registers all products from this assembly. See ExampleModIds.Products.cs for examples.
             registrator.RegisterAllProducts();
+			//registrator.RegisterData<Terrain>();
 
             // Use data class registration to register other protos such as machines, recipes, etc.
             registrator.RegisterDataWithInterface<IModuleGroup>();
