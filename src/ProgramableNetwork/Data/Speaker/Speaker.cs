@@ -213,6 +213,8 @@ namespace ProgramableNetwork.Data.Speaker
         private IEntityMaintenanceProvider m_maintenanceConsumer;
         [DoNotSave(0, null)]
         private long m_nextPlay;
+        [DoNotSave(0, null)]
+        private AudioSource m_audioSource;
 
         [DoNotSave(0, null)]
         public bool IsIdleForMaintenance => m_maintenanceConsumer.Status.IsBroken;
@@ -257,10 +259,18 @@ namespace ProgramableNetwork.Data.Speaker
 
                 if (m_nextPlay < DateTime.Now.Ticks || m_nextPlay == 0)
                 {
-                    var clipper = GlobalDependencyResolver.Get<UiContext>().AudioDb.GetSharedAudioUi(Sound);
+                    if (m_audioSource == null)
+                    {
+                        m_audioSource = GlobalDependencyResolver.Get<UiContext>().AudioDb
+                            .GetClonedAudio(Sound, Mafi.Unity.Audio.AudioChannel.Machines);
+                        m_audioSource.spatialBlend = 1f; // 3D sound
+                        m_audioSource.loop = false;
+                    }
 
-                    AudioSource.PlayClipAtPoint(clipper.clip, Position3f.ToVector3(), Volume.ToFloat() * 100f);
-                    m_nextPlay = DateTime.Now.Ticks + (long)(clipper.clip.length * TimeSpan.TicksPerSecond);
+                    m_audioSource.transform.position = Position3f.ToVector3();
+                    m_audioSource.volume = Volume.ToFloat();
+                    m_audioSource.Play();
+                    m_nextPlay = DateTime.Now.Ticks + (long)(m_audioSource.clip.length * TimeSpan.TicksPerSecond);
                 }
             }
             else
@@ -292,6 +302,7 @@ namespace ProgramableNetwork.Data.Speaker
         public void SetSound(string sound)
         {
             Sound = sound;
+            m_audioSource = null; // Force re-creation with new clip on next play
         }
 
         [DoNotSave()]

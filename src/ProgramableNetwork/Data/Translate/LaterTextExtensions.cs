@@ -111,20 +111,16 @@ namespace ProgramableNetwork
 				h.OnShow(() =>
 				{
 					int count = newList.Count;
-					Log.Info($"[LaterText] OnShow fired host={tag.TypeName}#{tag.Id} pending={count}");
 					for (int i = 0; i < count; i++)
 					{
 						try { newList[i](); }
 						catch (Exception ex) { Log.Exception(ex, $"[LaterText] apply #{i} threw on host={tag.TypeName}#{tag.Id}"); }
 					}
 					newList.Clear();
-					Log.Info($"[LaterText] OnShow finished host={tag.TypeName}#{tag.Id} cleared");
 				});
-				Log.Info($"[LaterText] Registry created host={tag.TypeName}#{tag.Id}");
 				return newList;
 			});
 			list.Add(apply);
-			Log.Info($"[LaterText] Registered host={tag.TypeName}#{tag.Id} freshHost={freshHost} totalPending={list.Count}");
 			// Apply once immediately so the component isn't blank until first show. If translations
 			// aren't loaded yet, this initial call captures English; OnShow will refresh later.
 			try { apply(); }

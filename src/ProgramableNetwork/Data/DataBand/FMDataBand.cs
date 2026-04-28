@@ -116,8 +116,8 @@ namespace ProgramableNetwork
 			{
 				if (item.ValidIterations-- == 0)
 				{
-					// After one second reset signal
-					item.Value = [];
+					// After one second reset signal (no allocation — just clear length)
+					item.ClearValue();
 					item.Id3 = string.Empty;
 				}
 			}
@@ -128,28 +128,37 @@ namespace ProgramableNetwork
 			}
 		}
 
-		public void Update(int index, Fix32[] value, bool logging = false)
+		public void Update(int index, Fix32[] value, int length, bool logging = false)
 		{
-			m_active[index].Value = new Fix32[value.Length];
-			Array.Copy(value, m_active[index].Value, value.Length);
+			m_active[index].WriteValue(value, length);
 			m_active[index].ValidIterations = 60;
 
 			if (logging)
 			{
-				Log.Info($"[FMDataBand] Written [{index}]: {value.Length}, [{string.Join(",", value)}]");
+				Log.Info($"[FMDataBand] Written [{index}]: {length}, [{string.Join(",", value.Take(length))}]");
 			}
 		}
 
-		public Fix32[] Read(int index)
+		/// <summary>
+		/// Returns the internal signal buffer and its valid length for the given channel.
+		///
+		/// Unlike AM (which returns a simple Fix32 copy), FM channels carry multi-value arrays.
+		/// Returning the internal buffer directly avoids allocating a copy on every read — which
+		/// matters because this is called per-module per-tick. This is safe because all current
+		/// callers consume the data immediately within the same tick (FMDataBandChannel.Update
+		/// copies it via WriteValue; the FM Receiver module reads individual elements inline).
+		///
+		/// If a future caller needs to store the data across ticks, it should copy into its own
+		/// buffer rather than holding this reference, since the channel may overwrite or clear it.
+		/// </summary>
+		public (Fix32[] data, int length) Read(int index)
 		{
-			if (m_active[index].ValidIterations > 0)
+			var channel = m_active[index];
+			if (channel.ValidIterations > 0)
 			{
-				Fix32[] ints = new Fix32[m_active[index].Value.Length];
-				Array.Copy(m_active[index].Value, ints, ints.Length);
-				return ints;
+				return (channel.Value, channel.ValueLength);
 			}
-			// else only zeros
-			return [];
+			return (Array.Empty<Fix32>(), 0);
 		}
 
 		public void CreateChannel()

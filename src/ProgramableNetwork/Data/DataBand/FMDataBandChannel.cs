@@ -11,7 +11,15 @@ namespace ProgramableNetwork;
 public class FMDataBandChannel : IDataBandChannel {
 	public int Index { get; set; }
 	public string Id3 { get; set; }
-	public Fix32[] Value { get; set; }
+	/// <summary>
+	/// Pre-allocated signal data buffer. Only the first <see cref="ValueLength"/> elements are valid.
+	/// Do NOT replace this array — write into it and update ValueLength instead.
+	/// </summary>
+	public Fix32[] Value { get; set; } = Array.Empty<Fix32>();
+	/// <summary>
+	/// Number of valid elements in <see cref="Value"/>. May be less than Value.Length.
+	/// </summary>
+	public int ValueLength { get; set; }
 	public int ValidIterations { get; set; }
 	public Antena Antena { get => m_antena; set { m_antenaId = value?.Id ?? new EntityId(0); m_antena = value; } }
 
@@ -20,11 +28,48 @@ public class FMDataBandChannel : IDataBandChannel {
 	private Antena m_antena;
 	private EntityId m_antenaId;
 
+	/// <summary>
+	/// Copies <paramref name="source"/> into the stable <see cref="Value"/> buffer,
+	/// growing the buffer only when necessary. Sets <see cref="ValueLength"/>.
+	/// </summary>
+	public void WriteValue(Fix32[] source, int length)
+	{
+		if (Value.Length < length)
+		{
+			Value = new Fix32[length];
+		}
+		Array.Copy(source, Value, length);
+		ValueLength = length;
+	}
+
+	/// <summary>
+	/// Marks the channel as having no valid data without reallocating the buffer.
+	/// </summary>
+	public void ClearValue()
+	{
+		ValueLength = 0;
+	}
+
 	public static void Serialize(FMDataBandChannel channel, BlobWriter writer) {
 		writer.WriteByte(/*version*/4);
 		writer.WriteInt(channel.Index);
 		writer.WriteString(channel.Id3 ?? string.Empty);
-		writer.WriteArray(channel.Value ?? new Fix32[0]);
+		// Serialize only the valid portion of the buffer
+		Fix32[] toWrite;
+		if (channel.ValueLength == 0)
+		{
+			toWrite = Array.Empty<Fix32>();
+		}
+		else if (channel.ValueLength == channel.Value.Length)
+		{
+			toWrite = channel.Value;
+		}
+		else
+		{
+			toWrite = new Fix32[channel.ValueLength];
+			Array.Copy(channel.Value, toWrite, channel.ValueLength);
+		}
+		writer.WriteArray(toWrite);
 		writer.WriteInt(channel.ValidIterations);
 		writer.WriteInt(channel.m_antenaId.Value);
 	}
@@ -43,6 +88,7 @@ public class FMDataBandChannel : IDataBandChannel {
 			Index = index,
 			Id3 = customName,
 			Value = value,
+			ValueLength = value.Length,
 			ValidIterations = reader.ReadInt(),
 			m_antenaId = new EntityId(version > 0 ? reader.ReadInt() : 0)
 		};
@@ -55,8 +101,8 @@ public class FMDataBandChannel : IDataBandChannel {
 
 	public void Update() {
 		if (Antena?.DataBand is FMDataBand targetDataBand) {
-			Fix32[] data = targetDataBand.Read(Index);
-			OriginalDataBand.Update(Index, data);
+			(Fix32[] data, int length) = targetDataBand.Read(Index);
+			OriginalDataBand.Update(Index, data, length);
 			OriginalDataBand.Id3(Index, targetDataBand.GetId3(Index));
 		}
 	}

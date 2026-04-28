@@ -395,7 +395,7 @@ namespace ProgramableNetwork.Ui
 				(m_dataBandChannel?.Id3?.IsNullOrEmpty() ?? true ? "N/A" : m_dataBandChannel.Id3)
 				.AsLoc());
 			m_dataCount = AddAndReturn(new Display("0".AsLoc())).Width(24.px());
-			m_dataCount.ObserveValue(() => m_dataBandChannel?.Value?.Length ?? 0);
+			m_dataCount.ObserveValue(() => m_dataBandChannel?.ValueLength ?? 0);
 			m_gotoButton = new ButtonIcon(Mafi.Unity.Assets.Unity.UserInterface.General.Search_svg)
 				.Height(24.px())
 				.OnClick(panToSourceAntenna);

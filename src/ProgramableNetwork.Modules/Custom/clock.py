@@ -8,8 +8,12 @@ from Core.module import DefaultControllers, Module
 
 class Runtime_Clock_1(Module):
     name = "Control: Clock (1 output)"
-    description = "Outputs an integer counter on <b>clock</b> that increments every <b>clock_period</b> ticks and wraps to zero at <b>max_count</b>. With the <b>mode</b> field on, output instead pulses true only on the tick where the counter would change."
+    description = "Outputs an integer counter on <b>clock</b> that increments every <b>clock_period</b> ticks and wraps to zero at <b>max_count</b>. With the <b>mode</b> field on, output instead pulses true only on the tick where the counter would change. An optional <b>reset</b> input holds the clock at zero and suppresses output while non-zero; counting resumes when reset goes back to zero."
     symbol = "CLK"
+
+    inputs = [
+        Input("reset", "Reset (hold non-zero to freeze at 0)")
+    ]
 
     outputs = [
         Output("clock", "Clock")
@@ -20,13 +24,20 @@ class Runtime_Clock_1(Module):
         Int32Field("clock_period", "Clock Period", "Updates between each update of the output", 1),
         Int32Field("max_count", "Max Output", "Output resets when count reaches this value", 2)
     ]
-   
+
     width = 1
-    
+
     categories = [ DefaultCategories.Control ]
     controllers = [ DefaultControllers.Controller ]
 
     def action(self):
+        # While reset is non-zero, hold everything at 0 and do not count
+        reset = self.Input.get("reset", Fix32.Zero)
+        if reset > Fix32.Zero:
+            self.Output.set_int("sub_clock", 0)
+            self.Output.set_int("clock", 0)
+            return
+
         sub_clock = self.Output.get_int("sub_clock", 0)
         sub_clock = sub_clock + 1
         update = False
@@ -49,12 +60,16 @@ class Runtime_Clock_1(Module):
                 output = 0
 
             self.Output.set_int("clock", output)
-        
+
 
 class Runtime_Clock_2(Module):
     name = "Control: Clock (2 outputs)"
-    description = "Outputs an integer counter on <b>clock</b> that increments every <b>clock_period</b> ticks and wraps to zero at <b>max_count</b>, plus an <b>update</b> boolean that pulses true on every tick where the counter changes."
+    description = "Outputs an integer counter on <b>clock</b> that increments every <b>clock_period</b> ticks and wraps to zero at <b>max_count</b>, plus an <b>update</b> boolean that pulses true on every tick where the counter changes. An optional <b>reset</b> input holds the clock at zero and suppresses output while non-zero; counting resumes when reset goes back to zero."
     symbol = "CLOCK"
+
+    inputs = [
+        Input("reset", "Reset (hold non-zero to freeze at 0)")
+    ]
 
     outputs = [
         Output("update", "Updated this tick"),
@@ -65,13 +80,21 @@ class Runtime_Clock_2(Module):
         Int32Field("clock_period", "Clock Period", "Updates between each update of the output", 1),
         Int32Field("max_count", "Reset value", "Output resets when count reaches this value", 2)
     ]
-   
+
     width = 2
-    
+
     categories = [ DefaultCategories.Control ]
     controllers = [ DefaultControllers.Controller ]
 
     def action(self):
+        # While reset is non-zero, hold everything at 0 and do not count
+        reset = self.Input.get("reset", Fix32.Zero)
+        if reset > Fix32.Zero:
+            self.Output.set_int("sub_clock", 0)
+            self.Output.set_bool("update", False)
+            self.Output.set_int("clock", 0)
+            return
+
         sub_clock = self.Output.get_int("sub_clock", 0)
         sub_clock = sub_clock + 1
         update = False

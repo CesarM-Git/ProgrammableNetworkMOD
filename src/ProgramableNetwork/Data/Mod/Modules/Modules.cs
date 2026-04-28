@@ -2572,7 +2572,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 					m.Output["signal"] = strenght;
 					m.Display["id3"] = signals!.Id3 ?? "N/A";
 					Fix32[] signalsValue = signals!.Value!;
-					int minCount = Math.Min(signalsValue.Length, digits);
+					int minCount = Math.Min(signals!.ValueLength, digits);
 					for (int i = 0; i < minCount; i++) {
 						m.Output[NAMES[i]] = signalsValue[i];
 					}
@@ -2638,6 +2638,8 @@ public class Modules : ModuleGroup, IModuleGroup {
 		}
 
 		Action<Module> WriteSignals(int digits) {
+			// Pre-allocate a reusable buffer per broadcaster size — no per-tick allocation
+			Fix32[] signalBuffer = new Fix32[digits];
 			return (Module m) => {
 				Antena entity = m.Field.Entity<Antena>("antena");
 				if (entity.DataBand is FMDataBand fm) {
@@ -2651,12 +2653,11 @@ public class Modules : ModuleGroup, IModuleGroup {
 							m.Field.Bool["logging"] = false;
 						}
 
-						Fix32[] signals = new Fix32[digits];
 						for (int i = 0; i < digits; i++) {
-							signals[i] = m.Input[NAMES[i], 0];
+							signalBuffer[i] = m.Input[NAMES[i], 0];
 						}
 						int channel = m.Field.Integer["fm"];
-						fm.Update(channel, signals, logging);
+						fm.Update(channel, signalBuffer, digits, logging);
 						fm.Id3(channel, m.Field["id3", string.Empty]);
 					}
 				} else {
