@@ -131,7 +131,7 @@ namespace ProgramableNetwork
 
 			writer.WriteLong(Id);
 			writer.WriteString(m_protoId);
-			writer.WriteInt(/*Version*/ 4);
+			writer.WriteInt(/*Version*/ 3);
 			writer.WriteBool(IsPaused);
 			writer.WriteInt((int)Status);
 			Dict<string, int>.Serialize(NumberData, writer);
@@ -220,7 +220,7 @@ namespace ProgramableNetwork
 			// Covers version < 3 (upstream never had separated dicts) AND version 3
 			// saves from our GC-optimized build where data managers wrote to NumberData
 			// via PrefixedKeyCache but the serializer already wrote empty separated dicts.
-			if (loadedVersion < 4)
+			if (loadedVersion < 3)
 			{
 				var keysToRemove = new System.Collections.Generic.List<string>();
 				foreach (var kvp in NumberData)
@@ -255,7 +255,7 @@ namespace ProgramableNetwork
 				}
 				if (keysToRemove.Count > 0)
 				{
-					Log.Info($"[Programable Network] Migration v{loadedVersion}->v4: migrated {keysToRemove.Count} prefixed keys from NumberData for module {Id} ({m_protoId})");
+					Log.Info($"[Programable Network] Migration v{loadedVersion}->v3: migrated {keysToRemove.Count} prefixed keys from NumberData for module {Id} ({m_protoId})");
 				}
 				foreach (var k in keysToRemove)
 				{
