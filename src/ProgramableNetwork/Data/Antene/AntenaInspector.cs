@@ -451,19 +451,11 @@ namespace ProgramableNetwork.Ui
 	public class AMDataBandChannelEntry : Row {
 
 		private AMDataBandChannel m_channel;
-		private Antena m_sourceAntena;
 		private readonly Display m_frequency;
 		private readonly Display m_strength;
 		private readonly Display m_value;
-		private readonly ButtonIcon m_gotoButton;
-
-		private readonly EntityHighlighter m_highlighter;
-		private readonly CameraController m_cameraController;
 
 		public AMDataBandChannelEntry() {
-			m_cameraController = GlobalDependencyResolver.Get<CameraController>();
-			m_highlighter = GlobalDependencyResolver.Instantiate<EntityHighlighter>();
-
 			this.Height(24.px());
 			m_strength = AddAndReturn(new Display(".....".AsLoc())).Width(48.px());
 			m_strength.TextCenterMiddle();
@@ -473,29 +465,10 @@ namespace ProgramableNetwork.Ui
 			m_value.ObserveValue(() =>
 				(m_channel?.Value?.ToStringRounded(2) ?? "N/A")
 				.AsLoc());
-			m_gotoButton = new ButtonIcon(Mafi.Unity.Assets.Unity.UserInterface.General.Search_svg)
-				.Height(24.px())
-				.OnClick(panToSourceAntenna);
-			m_gotoButton.OnMouseEnterLeave(highlight, clearHighlight);
-		}
-
-		private void panToSourceAntenna() {
-			if (m_sourceAntena != null)
-				m_cameraController.PanTo(m_sourceAntena.Position2f);
-		}
-
-		private void highlight() {
-			if (m_sourceAntena != null)
-				m_highlighter.HighlightOnly(m_sourceAntena, ColorRgba.Cyan);
-		}
-
-		private void clearHighlight() {
-			m_highlighter.ClearAllHighlights();
 		}
 
 		public AMDataBandChannelEntry SetData(AMDataBandChannel channel, Antena source) {
 			m_channel = channel;
-			m_sourceAntena = source;
 			return this;
 		}
 
@@ -520,11 +493,6 @@ namespace ProgramableNetwork.Ui
 			};
 			m_strength.TextColor(color);
 			return this;
-		}
-
-		protected override void OnDetached() {
-			base.OnDetached();
-			m_highlighter.ClearAllHighlights();
 		}
 	}
 }

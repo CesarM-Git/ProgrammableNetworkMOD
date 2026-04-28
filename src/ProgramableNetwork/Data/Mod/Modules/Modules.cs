@@ -1200,7 +1200,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddCategory(Category.Connection)
 			.AddCategory(Category.ConnectionWrite)
 			.AddInput("pause", "Pause")
-			.AddEntityField<StaticEntity>("entity", "Connection device", "Any pausable building connectable by cable 20m from controller", filter: (m, e) => e.CanBePaused || e is CargoDepot)
+			.AddEntityField<StaticEntity>("entity", "Connection device", "Any pausable building connectable by cable 25m from controller", filter: (m, e) => e.CanBePaused || e is CargoDepot)
 			.Action(m => {
 				StaticEntity entity = m.Field.Entity<StaticEntity>("entity");
 				Fix32 input = m.Input["pause", 0];
@@ -1334,7 +1334,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 
 		registrator
 			.ModuleBuilderStart("Connection_Transport", "Connection: Transport", "TRANS")
-			.SetDescription("Transport connectable by cable 20m from controller")
+			.SetDescription("Transport connectable by cable 25m from controller")
 			.AddCategory(Category.Connection)
 			.AddCategory(Category.ConnectionRead)
 			.AddOutput("quantity", "Quantity")
@@ -1825,7 +1825,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.Width(2)
 			.AddInput("index", "Storage compartment")
 			.AddOutput("product", "Product type")
-			.AddEntityField<LayoutEntity>("entity", "Connection device", "Storage connectable by cable 20m from controller",
+			.AddEntityField<LayoutEntity>("entity", "Connection device", "Storage connectable by cable 25m from controller",
 				filter: (m, e) => e is StorageBase || // e is SettlementWasteModule
 								  e is TrainStationModule ||
 								  e is SettlementFoodModule ||
@@ -1924,7 +1924,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.Width(2)
 			.AddInput("index", "Storage compartment")
 			.AddInput("product", "Product type")
-			.AddEntityField<LayoutEntity>("entity", "Building with filter", "Connectable by cable 20m from controller",
+			.AddEntityField<LayoutEntity>("entity", "Building with filter", "Connectable by cable 25m from controller",
 				filter: (m, e) => e is Storage ||
 								  e is TrainStationModule ||
 								  e is CargoDepotModule ||
@@ -2069,7 +2069,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddCategory(Category.ConnectionWrite)
 			.Width(2)
 			.AddInput("on", "Active recipe")
-			.AddEntityField<Machine>("entity", "Building with filter", "Connectable by cable 20m from controller",
+			.AddEntityField<Machine>("entity", "Building with filter", "Connectable by cable 25m from controller",
 				filter: (m, e) => true /* Get info about is able to set recipe */)
 			.AddBooleanField("field_on", "Active recipe")
 			.AddBooleanField("on", "Active recipe")
@@ -2185,7 +2185,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddDisplay("constructed", "Constructed", 1, led: true)
 			.AddDisplay("pause", "Paused", 1, image: true)
 			.AddEntityField<StaticEntity>("entity", "Connection device",
-				"Any pausable building connectable by cable 20m from controller")
+				"Any pausable building connectable by cable 25m from controller")
 			.Action(m => {
 				StaticEntity e = m.Field.Entity<StaticEntity>("entity");
 				if (e is not null) {
@@ -2240,7 +2240,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddInput("boost", "Unity boost active")
 			.AddOutput("boost", "Unity boost active")
 			.AddEntityField<IEntityWithBoost>("entity", "Connection device",
-				"Any building connectable by cable 20m from controller")
+				"Any building connectable by cable 25m from controller")
 			.AddBooleanField("field_boost", "Set boost by settings", defaultValue: false)
 			.AddBooleanField("boost", "Set boost by settings", defaultValue: false)
 			.AddDisplay("boost", "Boost", 1, image: true)
@@ -2729,17 +2729,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 					}
 
 					int channelIdx = m.Field.Integer["am"];
-
-					// First check own antenna's local channels (e.g. from WorldMapMine redirects)
-					Fix32 localValue = am.Read(channelIdx, Fix32.Zero);
-					if (localValue != Fix32.Zero) {
-						m.Output["am"] = localValue;
-						return;
-					}
-
-					// Then check remote antennas via AMManager
-					AMManager amManager = GlobalDependencyResolver.Get<AMManager>();
-					m.Output["am"] = amManager.Signal(entity, channelIdx);
+					m.Output["am"] = am.Read(channelIdx, Fix32.Zero);
 				} else {
 					m.SetError("No antena connected");
 					m.Output["am"] = Fix32.Zero;

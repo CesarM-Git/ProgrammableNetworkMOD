@@ -32,7 +32,7 @@ class Runtime_FlipFlop_1(Module):
     categories = [ DefaultCategories.Control ]
     controllers = [ DefaultControllers.Controller ]
 
-    def action(self):
+    def Action(self):
         if not self.Input.get_bool("enable", False):
             return
 
@@ -184,7 +184,7 @@ class Runtime_FlipFlop_4(Module):
     categories = [ DefaultCategories.Control ]
     controllers = [ DefaultControllers.Controller ]
 
-    def action(self):
+    def Action(self):
         if not self.Input.get_bool("enable", False):
             return
 
