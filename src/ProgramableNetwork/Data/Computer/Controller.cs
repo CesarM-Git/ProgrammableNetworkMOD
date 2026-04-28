@@ -654,9 +654,7 @@ namespace ProgramableNetwork
 		// FIX: Cached module-ID-to-Module lookup, rebuilt only when the module
 		// list actually changes (add/remove/clear). Previously, UpdateModules()
 		// called Modules.ToDictionary() on every sim tick, allocating a new
-		// Dictionary<long, Module> + all its internal arrays each time. With N
-		// controllers × T ticks/sec this was one of the largest sources of GC
-		// pressure leading to OOM.
+		// Dictionary<long, Module> + all its internal arrays each time.
 		[DoNotSave()]
 		private Dictionary<long, Module> m_moduleLookupCache;
 		[DoNotSave()]
