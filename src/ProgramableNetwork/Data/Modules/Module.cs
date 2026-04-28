@@ -227,29 +227,17 @@ namespace ProgramableNetwork
 				{
 					if (kvp.Key.StartsWith("in__"))
 					{
-						string bare = kvp.Key.Substring("in__".Length);
-						if (!InputNumberData.ContainsKey(bare))
-						{
-							InputNumberData[bare] = Fix32.FromRaw(kvp.Value);
-						}
+						InputNumberData[kvp.Key.Substring("in__".Length)] = Fix32.FromRaw(kvp.Value);
 						keysToRemove.Add(kvp.Key);
 					}
 					else if (kvp.Key.StartsWith("out__"))
 					{
-						string bare = kvp.Key.Substring("out__".Length);
-						if (!OutputNumberData.ContainsKey(bare))
-						{
-							OutputNumberData[bare] = Fix32.FromRaw(kvp.Value);
-						}
+						OutputNumberData[kvp.Key.Substring("out__".Length)] = Fix32.FromRaw(kvp.Value);
 						keysToRemove.Add(kvp.Key);
 					}
 					else if (kvp.Key.StartsWith("field__"))
 					{
-						string bare = kvp.Key.Substring("field__".Length);
-						if (!FieldNumberData.ContainsKey(bare))
-						{
-							FieldNumberData[bare] = Fix32.FromRaw(kvp.Value);
-						}
+						FieldNumberData[kvp.Key.Substring("field__".Length)] = Fix32.FromRaw(kvp.Value);
 						keysToRemove.Add(kvp.Key);
 					}
 				}
