@@ -15,7 +15,7 @@ class Runtime_Clock_1(Module):
     ]
 
     fields = [
-        BooleanField("mode", "Show count", "True: show counter. False: true only during the tick where the output changes", False),
+        BooleanField("mode", "Pulse mode", "True: true only during the tick where the output changes. False: show counter", False),
         Int32Field("clock_period", "Clock Period", "Updates between each update of the output", 1),
         Int32Field("max_count", "Max Output", "Output resets when count reaches this value", 2)
     ]

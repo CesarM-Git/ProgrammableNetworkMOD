@@ -187,7 +187,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddOutput("value", "Value")
 			.AddFix32Field("float", "Float")
 			.Action(m => { m.Output["value"] = m.Field["float"]; })
-			.AddDisplay("number", "Value", 1)
+			.AddDisplay("float", "Value", 1)
 			.Display(m => {
 				var s = m.Field["float"].ToStringRounded(1);
 				m.Display["float"] = s.Length > 3 ? s.Substring(s.Length - 3) : s;
@@ -1424,7 +1424,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 				var reactor = m.Field.Entity<NuclearReactor>("reactor");
 
 				m.Output["heat"] = reactor?.HeatAmount.ToFix32() ?? Fix32.Zero;
-				m.Output["meltdown"] = (reactor?.IsInMeltdown ?? false) ? 1.ToFix32() : 2.ToFix32();
+				m.Output["meltdown"] = (reactor?.IsInMeltdown ?? false) ? 1.ToFix32() : Fix32.Zero;
 				m.Output["power"] = reactor?.CurrentPowerLevel.ToFix32() ?? Fix32.Zero;
 				m.Output.Integer["breeding"] = reactor?.EnrichmentStep ?? 0;
 
@@ -1456,7 +1456,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddDisplay("breading", "Breading", 1, image: true)
 			.Display((m) => {
 				m.Display["power"] = (m.Output["power"] * 100).ToStringRounded(1) + "%";
-				m.Display["meltdown"] = m.Output["meltdown"] > 0 ? "" : "1";
+				m.Display["meltdown"] = m.Output["meltdown"] > 0 ? "1" : "";
 
 				if (m.Field.Entity<NuclearReactor>("reactor") is { } reactor) {
 					m.Display["breading"] = reactor.Prototype.Enrichment.HasValue && m.Output.Integer["breeding"] > 0
@@ -2192,16 +2192,16 @@ public class Modules : ModuleGroup, IModuleGroup {
 
 	private string Thousands(int v) {
 		if (v > 1100000) {
-			return (v / 1000000).ToString();
+			return $"{v / 1000000}M";
 		}
 		if (v > 900000) {
-			return $"{(v.ToFix32() / 100000).ToStringRounded(1)}M";
+			return $"{(v.ToFix32() / 1000000).ToStringRounded(1)}M";
 		}
 		if (v > 1100) {
-			return (v / 1000000).ToString();
+			return $"{v / 1000}k";
 		}
 		if (v > 900) {
-			return $"{(v.ToFix32() / 100).ToStringRounded(1)}k";
+			return $"{(v.ToFix32() / 1000).ToStringRounded(1)}k";
 		}
 		return v.ToString();
 	}
@@ -2253,7 +2253,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			return ModuleStatus.Error;
 		}
 
-		m.Output["product"] = Fix32.FromRaw(buffers[0].Invoke()?.Product.SlimId.Value ?? 0);
+		m.Output["product"] = Fix32.FromRaw(buffers[index].Invoke()?.Product.SlimId.Value ?? 0);
 		return ModuleStatus.Running;
 	}
 

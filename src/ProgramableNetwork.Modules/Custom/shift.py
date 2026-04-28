@@ -91,7 +91,7 @@ class Runtime_Shift_4(Module):
             # negative numbers are shifted to positive.
             # multiplying with num_inputs will ensure the post modulo number won't be affected by this offset.
             temp = shift_offset * num_inputs
-            shift_count = shift_offset - temp
+            shift_offset = shift_offset - temp
         if shift_offset >= num_inputs:
             shift_offset = shift_offset % num_inputs
         self.Output.set_int("index", shift_offset)
@@ -187,7 +187,7 @@ class Runtime_Shift_7(Module):
             # negative numbers are shifted to positive.
             # multiplying with num_inputs will ensure the post modulo number won't be affected by this offset.
             temp = shift_offset * num_inputs
-            shift_count = shift_offset - temp
+            shift_offset = shift_offset - temp
         if shift_offset >= num_inputs:
             shift_offset = shift_offset % num_inputs
         self.Output.set_int("index", shift_offset)
