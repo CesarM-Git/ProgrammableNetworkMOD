@@ -342,7 +342,7 @@
 <<<<<<< HEAD
 	["ProgramableNetwork_Module_Connection_Filter_Get__field__entity__desc", "Storage connectable by cable 50m from controller"],
 =======
-	["ProgramableNetwork_Module_Connection_Filter_Get__field__entity__desc", "Storage connectable by cable 40m from controller"],
+	["ProgramableNetwork_Module_Connection_Filter_Get__field__entity__desc", "Storage connectable by cable 50m from controller"],
 >>>>>>> upstream/main-programable-network-0.8
 	["ProgramableNetwork_Module_Connection_Filter_Get__field__entity__name", "Connection device"],
 	["ProgramableNetwork_Module_Connection_Filter_Get__field__field_index__name", "Set index by settings"],
@@ -356,7 +356,7 @@
 <<<<<<< HEAD
 	["ProgramableNetwork_Module_Connection_Filter_Set__field__entity__desc", "Connectable by cable 50m from controller"],
 =======
-	["ProgramableNetwork_Module_Connection_Filter_Set__field__entity__desc", "Connectable by cable 40m from controller"],
+	["ProgramableNetwork_Module_Connection_Filter_Set__field__entity__desc", "Connectable by cable 50m from controller"],
 >>>>>>> upstream/main-programable-network-0.8
 	["ProgramableNetwork_Module_Connection_Filter_Set__field__entity__name", "Building with filter"],
 	["ProgramableNetwork_Module_Connection_Filter_Set__field__field_index__name", "Set index by settings"],
@@ -384,7 +384,7 @@
 <<<<<<< HEAD
 	["ProgramableNetwork_Module_Connection_IsActive__field__entity__desc", "Any pausable building connectable by cable 50m from controller"],
 =======
-	["ProgramableNetwork_Module_Connection_IsActive__field__entity__desc", "Any pausable building connectable by cable 40m from controller"],
+	["ProgramableNetwork_Module_Connection_IsActive__field__entity__desc", "Any pausable building connectable by cable 50m from controller"],
 >>>>>>> upstream/main-programable-network-0.8
 	["ProgramableNetwork_Module_Connection_IsActive__field__entity__name", "Connection device"],
 	["ProgramableNetwork_Module_Connection_IsActive__name", "Connection: Status"],
@@ -420,7 +420,7 @@
 <<<<<<< HEAD
 	["ProgramableNetwork_Module_Connection_Recipe_Set__field__entity__desc", "Connectable by cable 50m from controller"],
 =======
-	["ProgramableNetwork_Module_Connection_Recipe_Set__field__entity__desc", "Connectable by cable 40m from controller"],
+	["ProgramableNetwork_Module_Connection_Recipe_Set__field__entity__desc", "Connectable by cable 50m from controller"],
 >>>>>>> upstream/main-programable-network-0.8
 	["ProgramableNetwork_Module_Connection_Recipe_Set__field__entity__name", "Building with filter"],
 	["ProgramableNetwork_Module_Connection_Recipe_Set__field__field_on__name", "Active recipe"],
@@ -490,7 +490,7 @@
 <<<<<<< HEAD
 	["ProgramableNetwork_Module_Connection_Storage__field__entity__desc", "Storage connectable by cable 50m from controller\nCan read everything with buffer information including Thermal Storage and shaft of generators in single row."],
 =======
-	["ProgramableNetwork_Module_Connection_Storage__field__entity__desc", "Storage connectable by cable 40m from controller\nCan read everything with buffer information including Thermal Storage and shaft of generators in single row."],
+	["ProgramableNetwork_Module_Connection_Storage__field__entity__desc", "Storage connectable by cable 50m from controller\nCan read everything with buffer information including Thermal Storage and shaft of generators in single row."],
 >>>>>>> upstream/main-programable-network-0.8
 	["ProgramableNetwork_Module_Connection_Storage__field__entity__name", "Connected storage"],
 	["ProgramableNetwork_Module_Connection_Storage__field__field_product__name", "Product"],
@@ -510,11 +510,11 @@
 	["ProgramableNetwork_Module_Connection_SwitchOff__name", "Connection: Switch Off"],
 	["ProgramableNetwork_Module_Connection_Transport__desc", "Transport connectable by cable 50m from controller"],
 =======
-	["ProgramableNetwork_Module_Connection_SwitchOff__field__entity__desc", "Any pausable building connectable by cable 40m from controller"],
+	["ProgramableNetwork_Module_Connection_SwitchOff__field__entity__desc", "Any pausable building connectable by cable 50m from controller"],
 	["ProgramableNetwork_Module_Connection_SwitchOff__field__entity__name", "Connection device"],
 	["ProgramableNetwork_Module_Connection_SwitchOff__input__pause__name", "Pause"],
 	["ProgramableNetwork_Module_Connection_SwitchOff__name", "Connection: Switch Off"],
-	["ProgramableNetwork_Module_Connection_Transport__desc", "Transport connectable by cable 40m from controller"],
+	["ProgramableNetwork_Module_Connection_Transport__desc", "Transport connectable by cable 50m from controller"],
 >>>>>>> upstream/main-programable-network-0.8
 	["ProgramableNetwork_Module_Connection_Transport__display__fullness__name", "Fullness"],
 	["ProgramableNetwork_Module_Connection_Transport__display__moving__name", "Is moving"],
