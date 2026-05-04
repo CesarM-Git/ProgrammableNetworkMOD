@@ -1753,15 +1753,17 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.ModuleBuilderStart("Connection_Vehicle_Set", "Connection: Vehicle count (set)", "V-S")
 			.AddCategory(Category.Connection)
 			.AddCategory(Category.ConnectionRead)
-			.SetDescription("Sets count of vehicles assigned to the building, by default it takes vehicles from all zones.")
+			.SetDescription("Sets count of vehicles assigned to the building, by default it takes vehicles from all zones. The <b>enable</b> toggle (or input) controls whether the module actively assigns/unassigns vehicles; when disabled the module idles without changing assignments.")
 			.Width(4)
+			.AddInput("enable", "Enable assignment")
 			.AddInput("count", "Vehicle count")
 			.AddInput("vehicle", "Vehicle type")
-			.AddEntityField<IEntityAssignedWithVehicles>("building", "Building", "Any building with configurable priority (40 metres)")
+			.AddEntityField<IEntityAssignedWithVehicles>("building", "Building", "Any building with configurable priority (50 metres)")
 			.AddEntityTypeField<DrivingEntityProto>("vehicle", "Vehicle", "Any suppoted vehicle type",
 				filter: (m, p) => m.Field.Entity<Entity>("building") is IEntityAssignedWithVehicles w && w.CanVehicleBeAssigned(p),
 				overrideInput: true) // TODO filter by building
 			.AddInt32Field("count", "Vehicle count", defaultValue: 0, overrideInput: true)
+			.AddBooleanField("enable", "Enable assignment", defaultValue: true, overrideInput: true)
 			.AddCustomField("zone", "Vehicle zone",
 				(ControllerInspector inspector, UiComponent container, Module module, Action refresh, Reference reference) => {
 					Dropdown<LogisticsZone> zonesDropdown = new Dropdown<LogisticsZone>(
@@ -1774,6 +1776,11 @@ public class Modules : ModuleGroup, IModuleGroup {
 					container.Add(zonesDropdown);
 				})
 			.Action(m => {
+				if (!m.FieldOrInput.Bool["enable"]) {
+					m.Warning = false;
+					return ModuleStatus.Iddle;
+				}
+
 				var logistic = m.Field.Entity<IEntityAssignedWithVehicles>("building");
 				if (logistic is null) {
 					m.SetError("Building is not connected");
