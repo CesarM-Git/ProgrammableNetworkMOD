@@ -6,7 +6,7 @@
 	"description_long": "Adds additional options to control machines by custom specified conditions in Controllers. Contains also programable displays and lights\nMod can be removed only in case is replaced by sanitizer version.",
 	"authors": [ "DeznekCZ" ],
 	"min_game_version": "0.8.3",
-	"max_verified_game_version": "0.8.3a",
+	"max_verified_game_version": "0.8.4",
 	"primary_dlls": [ "ProgramableNetwork.dll" ],
 	"mod_dependencies": [],
 	"optional_mod_dependencies": [],
