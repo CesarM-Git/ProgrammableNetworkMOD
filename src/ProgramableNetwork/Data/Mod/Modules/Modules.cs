@@ -70,6 +70,8 @@ public class Modules : ModuleGroup, IModuleGroup {
 		Display(registrator);
 		RadioAM(registrator);
 		RadioFM(registrator);
+		// Plc lives in Plc.cs as its own ModuleGroup; auto-registered by
+		// ModDefinition's RegisterDataWithInterface<IModuleGroup>().
 
 		// SPECIAL
 		registrator
@@ -196,7 +198,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddOutput("value", "Value")
 			.AddFix32Field("float", "Float")
 			.Action(m => { m.Output["value"] = m.Field["float"]; })
-			.AddDisplay("float", "Value", 1)
+			.AddDisplay("number", "Value", 1)
 			.Display(m => {
 				var s = m.Field["float"].ToStringRounded(1);
 				m.Display["float"] = s.Length > 3 ? s.Substring(s.Length - 3) : s;
@@ -1125,6 +1127,12 @@ public class Modules : ModuleGroup, IModuleGroup {
 		}
 	}
 
+	// Configurable multi-tick delay was moved to Python — see Runtime_Delay_1
+	// in src/ProgramableNetwork.Modules/Custom/delay.py.  It now serves as the
+	// reference example for the Module.Array API; the C#-side helpers it relies
+	// on (ArrayAccess.Resize(size, fillNew) / ArrayAccess.ShiftLeftWith) are
+	// what make the loop-free Python action() possible.
+
 	private void Connections(ProtoRegistrator registrator) {
 		registrator
 			.ModuleBuilderStart("Connection_Controller_Input", "Connection: Controller (4 pin, input)", "C-IN")
@@ -1186,7 +1194,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddCategory(Category.Connection)
 			.AddCategory(Category.ConnectionWrite)
 			.AddInput("pause", "Pause")
-			.AddEntityField<StaticEntity>("entity", "Connection device", "Any pausable building connectable by cable 50m from controller", filter: (m, e) => e.CanBePaused || e is CargoDepot)
+			.AddEntityField<StaticEntity>("entity", "Connection device", "Any pausable building connectable by cable 40m from controller", filter: (m, e) => e.CanBePaused || e is CargoDepot)
 			.Action(m => {
 				StaticEntity entity = m.Field.Entity<StaticEntity>("entity");
 				Fix32 input = m.Input["pause", 0];
@@ -1319,7 +1327,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 
 		registrator
 			.ModuleBuilderStart("Connection_Transport", "Connection: Transport", "TRANS")
-			.SetDescription("Transport connectable by cable 50m from controller")
+			.SetDescription("Transport connectable by cable 40m from controller")
 			.AddCategory(Category.Connection)
 			.AddCategory(Category.ConnectionRead)
 			.AddOutput("quantity", "Quantity")
@@ -1439,7 +1447,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 				var reactor = m.Field.Entity<NuclearReactor>("reactor");
 
 				m.Output["heat"] = reactor?.HeatAmount.ToFix32() ?? Fix32.Zero;
-				m.Output["meltdown"] = (reactor?.IsInMeltdown ?? false) ? 1.ToFix32() : Fix32.Zero;
+				m.Output["meltdown"] = (reactor?.IsInMeltdown ?? false) ? 1.ToFix32() : 2.ToFix32();
 				m.Output["power"] = reactor?.CurrentPowerLevel.ToFix32() ?? Fix32.Zero;
 				m.Output.Integer["breeding"] = reactor?.EnrichmentStep ?? 0;
 
@@ -1469,7 +1477,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddDisplay("breading", "Breading", 1, image: true)
 			.Display((m) => {
 				m.Display["power"] = (m.Output["power"] * 100).ToStringRounded(1) + "%";
-				m.Display["meltdown"] = m.Output["meltdown"] > 0 ? "1" : "";
+				m.Display["meltdown"] = m.Output["meltdown"] > 0 ? "" : "1";
 
 				if (m.Field.Entity<NuclearReactor>("reactor") is { } reactor) {
 					m.Display["breading"] = reactor.Prototype.Enrichment.HasValue && m.Output.Integer["breeding"] > 0
@@ -1821,7 +1829,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.Width(2)
 			.AddInput("index", "Storage compartment")
 			.AddOutput("product", "Product type")
-			.AddEntityField<LayoutEntity>("entity", "Connection device", "Storage connectable by cable 50m from controller",
+			.AddEntityField<LayoutEntity>("entity", "Connection device", "Storage connectable by cable 40m from controller",
 				filter: (m, e) => e is StorageBase || // e is SettlementWasteModule
 								  e is TrainStationModule ||
 								  e is SettlementFoodModule ||
@@ -1919,7 +1927,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.Width(2)
 			.AddInput("index", "Storage compartment")
 			.AddInput("product", "Product type")
-			.AddEntityField<LayoutEntity>("entity", "Building with filter", "Connectable by cable 50m from controller",
+			.AddEntityField<LayoutEntity>("entity", "Building with filter", "Connectable by cable 40m from controller",
 				filter: (m, e) => e is Storage ||
 								  e is TrainStationModule ||
 								  e is CargoDepotModule ||
@@ -2062,7 +2070,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddCategory(Category.ConnectionWrite)
 			.Width(2)
 			.AddInput("on", "Active recipe")
-			.AddEntityField<Machine>("entity", "Building with filter", "Connectable by cable 50m from controller",
+			.AddEntityField<Machine>("entity", "Building with filter", "Connectable by cable 40m from controller",
 				filter: (m, e) => true /* Get info about is able to set recipe */)
 			.AddBooleanField("on", "Active recipe", overrideInput: true)
 			.AddCustomField("recipe", "Recipe", (inspector, settings, module, refresh, reference) => settings.Add(new Ui.RecipeSelector(inspector, module, refresh, reference)))
@@ -2177,7 +2185,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddDisplay("constructed", "Constructed", 1, led: true)
 			.AddDisplay("pause", "Paused", 1, image: true)
 			.AddEntityField<StaticEntity>("entity", "Connection device",
-				"Any pausable building connectable by cable 50m from controller")
+				"Any pausable building connectable by cable 40m from controller")
 			.Action(m => {
 				StaticEntity e = m.Field.Entity<StaticEntity>("entity");
 				if (e is not null) {
@@ -2232,7 +2240,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddInput("boost", "Unity boost active")
 			.AddOutput("boost", "Unity boost active")
 			.AddEntityField<IEntityWithBoost>("entity", "Connection device",
-				"Any building connectable by cable 50m from controller")
+				"Any building connectable by cable 40m from controller")
 			.AddBooleanField("boost", "Set boost by settings", defaultValue: false, overrideInput: true)
 			.AddDisplay("boost", "Boost", 1, image: true)
 			.Action(m => {
@@ -2257,16 +2265,16 @@ public class Modules : ModuleGroup, IModuleGroup {
 
 	private string Thousands(int v) {
 		if (v > 1100000) {
-			return $"{v / 1000000}M";
+			return (v / 1000000).ToString();
 		}
 		if (v > 900000) {
-			return $"{(v.ToFix32() / 1000000).ToStringRounded(1)}M";
+			return $"{(v.ToFix32() / 100000).ToStringRounded(1)}M";
 		}
 		if (v > 1100) {
-			return $"{v / 1000}k";
+			return (v / 1000000).ToString();
 		}
 		if (v > 900) {
-			return $"{(v.ToFix32() / 1000).ToStringRounded(1)}k";
+			return $"{(v.ToFix32() / 100).ToStringRounded(1)}k";
 		}
 		return v.ToString();
 	}
@@ -2561,7 +2569,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 				}
 
 				(Fix32 strenght, FMDataBandChannel signals) = fmManager.Signal(m.Controller.Position3f.Tile3i, m.Field.Integer["fm"], logging);
-				if (strenght == 0)
+				if (strenght == 0 || signals?.Value == null)
 				// TODO generate noise or read data
 				{
 					m.Output["signal"] = 0;
@@ -2570,11 +2578,10 @@ public class Modules : ModuleGroup, IModuleGroup {
 					}
 				} else {
 					m.Output["signal"] = strenght;
-					m.Display["id3"] = signals!.Id3 ?? "N/A";
-					Fix32[] signalsValue = signals!.Value!;
-					int minCount = Math.Min(signals!.ValueLength, digits);
+					m.Display["id3"] = signals.Id3 ?? "N/A";
+					int minCount = Math.Min(signals.Count, digits);
 					for (int i = 0; i < minCount; i++) {
-						m.Output[NAMES[i]] = signalsValue[i];
+						m.Output[NAMES[i]] = signals.Value[i];
 					}
 					for (int i = minCount; i < digits; i++) {
 						m.Output[NAMES[i]] = 0;
@@ -2638,8 +2645,6 @@ public class Modules : ModuleGroup, IModuleGroup {
 		}
 
 		Action<Module> WriteSignals(int digits) {
-			// Pre-allocate a reusable buffer per broadcaster size — no per-tick allocation
-			Fix32[] signalBuffer = new Fix32[digits];
 			return (Module m) => {
 				Antena entity = m.Field.Entity<Antena>("antena");
 				if (entity.DataBand is FMDataBand fm) {
@@ -2653,12 +2658,17 @@ public class Modules : ModuleGroup, IModuleGroup {
 							m.Field.Bool["logging"] = false;
 						}
 
-						for (int i = 0; i < digits; i++) {
-							signalBuffer[i] = m.Input[NAMES[i], 0];
+						Fix32[] scratch = SignalBufferPool.Rent();
+						try {
+							for (int i = 0; i < digits; i++) {
+								scratch[i] = m.Input[NAMES[i], 0];
+							}
+							int channel = m.Field.Integer["fm"];
+							fm.Update(channel, scratch, digits, logging);
+							fm.Id3(channel, m.Field["id3", string.Empty]);
+						} finally {
+							SignalBufferPool.Return(scratch);
 						}
-						int channel = m.Field.Integer["fm"];
-						fm.Update(channel, signalBuffer, digits, logging);
-						fm.Id3(channel, m.Field["id3", string.Empty]);
 					}
 				} else {
 					m.SetError("No antena connected");
@@ -2707,15 +2717,10 @@ public class Modules : ModuleGroup, IModuleGroup {
 			// dynamic
 			.Action((Module m) => {
 				Antena entity = m.Field.Entity<Antena>("antena");
-				if (entity != null && entity.DataBand is AMDataBand am)
+				if ((entity?.DataBand is AMDataBand am))
+				// TODO generate noise or read data
 				{
-					if (!entity.IsEnabled || entity.IsPaused) {
-						m.Output["am"] = Fix32.Zero;
-						return;
-					}
-
-					int channelIdx = m.Field.Integer["am"];
-					m.Output["am"] = am.Read(channelIdx, Fix32.Zero);
+					m.Output["am"] = am.Read(m.Field["am", Fix32.Zero].IntegerPart, Fix32.Zero);
 				} else {
 					m.SetError("No antena connected");
 					m.Output["am"] = Fix32.Zero;
@@ -2723,13 +2728,10 @@ public class Modules : ModuleGroup, IModuleGroup {
 			})
 			.Display((Module m) => {
 				Antena entity = m.Field.Entity<Antena>("antena");
-				if (entity != null && entity.DataBand is AMDataBand)
+				if ((entity?.DataBand is AMDataBand am))
+				// TODO generate noise or read data
 				{
-					if (!entity.IsEnabled) {
-						m.Display["am"] = "OFF";
-						return;
-					}
-
+					// signal value
 					int value = m.Field.Integer["am"];
 					Fix32 displayValue = (53 + value).ToFix32() * 10f.ToFix32();
 					m.Display["am"] = displayValue.ToStringRounded(0);

@@ -14,7 +14,9 @@ namespace ProgramableNetwork.Ui
     {
         private readonly Action m_refresh;
         private readonly Window m_window;
-        private readonly ISelectionInspector<Antena, AntenaSelector, Antena> m_inspector;
+        // Concrete type (not the interface) so we can reach Context.InputScheduler for
+        // command dispatch — the interface only exposes selection plumbing.
+        private readonly AntenaInspector m_inspector;
         private readonly FMDataBandChannel m_module;
         private readonly Fix32 m_distance;
         private Button m_selectionButton;
@@ -75,6 +77,16 @@ namespace ProgramableNetwork.Ui
 
         private void SelectionChanged(Antena entity)
         {
+            // Route the binding through a command. Slot index is the channel's current
+            // position in the owning band's redirected list at dispatch time.
+            int slot = currentSlot(m_module);
+            if (slot >= 0)
+            {
+                m_inspector.Context.InputScheduler.ScheduleInputCmd(new AntenaChannelSetFmSourceCmd(
+                    m_module.OriginalDataBand.Antena.Id, slot, entity?.Id));
+            }
+            // Local view state still updates immediately so the picker UI is responsive
+            // before the command applies.
             m_module.Antena = entity;
             if (entity != null)
             {
@@ -109,6 +121,17 @@ namespace ProgramableNetwork.Ui
                 m_refresh,
                 (entity) => entity.Prototype == m_module.OriginalDataBand.Antena.Prototype && entity != m_inspector.Entity,
                 SelectionChanged);
+        }
+
+        private static int currentSlot(FMDataBandChannel channel)
+        {
+            int i = 0;
+            foreach (var c in channel.OriginalDataBand.Channels)
+            {
+                if (object.ReferenceEquals(c, channel)) { return i; }
+                i++;
+            }
+            return -1;
         }
     }
 }

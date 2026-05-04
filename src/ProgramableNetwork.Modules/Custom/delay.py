@@ -5,9 +5,16 @@ from Core.module import DefaultControllers, Module
 
 from Mafi import Fix32
 
+
+# Reference example for the Module.Array API.  Implements a configurable
+# multi-tick delay as an array-copy shift register: every tick reads slot[0],
+# shifts the buffer left by one, and writes the new input at the end.  All of
+# that happens inside Module.Array.shift_left_with() — Python's parser has no
+# for/while loop, so the loop is in C#.  Resize seeds new slots with the most
+# recent sample so the output stays continuous when the delay field grows.
 class Runtime_Delay_1(Module):
-    name = "Control: Delay (multi tick)"
-    description = "Delays input <b>input</b> by the number of ticks set in the <b>delay</b> field, then emits the same signal on <b>output</b>. A delay of 1 (or less) passes the value through unchanged."
+    name = "Control: Delay (configurable)"
+    description = "Delays input <b>input</b> by the number of ticks set in the <b>delay</b> field, then emits the same signal on <b>output</b>. A delay of 1 (or less) passes the value through unchanged. Maximum delay is 64 ticks. When the field is increased the new tail of the buffer is seeded with the most recent sample so the output stays continuous; when shrunk the oldest pending samples continue to emit in order."
     symbol = "DLY"
     inputs = [
         Input("input", "Signal input")
@@ -15,43 +22,46 @@ class Runtime_Delay_1(Module):
     outputs = [
         Output("output", "Signal output")
     ]
-
     fields = [
-        Int32Field("delay", "Delay", "Sets how many ticks the output should be delayed", 1)
+        Int32Field("delay", "Delay", "How many ticks the output should be delayed (capped at 64)", 1)
     ]
-
     width = 1
-
     categories = [ DefaultCategories.Control ]
     controllers = [ DefaultControllers.Controller ]
 
     def action(self):
         input = self.Input.get("input", Fix32.Zero)
         delay = self.Field.get_int("delay", 1)
+        if delay > 64:
+            delay = 64
 
+        # Pass-through fast path — drop the buffer if the field shrank.
         if delay <= 1:
-            # No need to buffer delays if they are this short
+            if self.Array.length > 0:
+                self.Array.resize(0)
             self.Output.set("output", input)
             return
 
-        # Update the counter
-        count = self.Output.get_int("count", 0)
-        if count >= delay:
-            count = 0
+        # Keep buffer sized to the field.  On grow, seed new tail slots with
+        # the most recent sample so the output stays continuous; on shrink,
+        # resize() truncates from the tail (oldest pending samples keep
+        # emitting in order).
+        old_length = self.Array.length
+        if old_length != delay:
+            last_value = Fix32.Zero
+            if old_length > 0:
+                last_value = self.Array.get(old_length - 1, Fix32.Zero)
+            self.Array.resize(delay, last_value)
 
-        # Generate a name for the buffer storage, which is unique to the count.
-        # The simplest approach is to convert the int to a string.
-        buffer_name = f"{count}"
+        # Atomic shift-register step: shift left, push input at end, return
+        # what was at slot[0].  That value has been waiting `delay` ticks.
+        oldest = self.Array.shift_left_with(input)
+        self.Output.set("output", oldest)
 
-        # Here it gets more complicated to follow what goes on.
-        # The buffer is put on output and then input is put into the same buffer.
-        # Since the name of the buffer follows the counter, each name is used at a fixed internal.
-        # This will provide the same result as a list where you push to one end and pop from the other.
-        # The difference being that here we don't have to worry about all the other values.
-        self.Output.set("output", self.Output.get(buffer_name, Fix32.Zero))
-        self.Output.set(buffer_name, input)
-        self.Output.set_int("count", count + 1)
-
+# The fixed-size delay modules below use a recursive `_shift(n)` helper that
+# walks down from the highest output index, copying slot N-1 into slot N.
+# Output names are pre-built once at class-load time as `OUT_NAMES` so there
+# are no per-tick string allocations.
 
 class Runtime_Delay_2(Module):
     name = "Control: Delay (2 ticks)"
@@ -67,10 +77,19 @@ class Runtime_Delay_2(Module):
     categories = [ DefaultCategories.Control ]
     controllers = [ DefaultControllers.Controller ]
 
+    OUT_NAMES = ["", "1", "2"]
+
     def action(self):
         a = self.Input.get("0", Fix32.Zero)
-        self.Output.set("2", self.Output.get("1", Fix32.Zero))
+        self._shift(2)
         self.Output.set("1", a)
+
+    def _shift(self, n):
+        if n <= 1:
+            return
+        self.Output.set(self.OUT_NAMES[n], self.Output.get(self.OUT_NAMES[n - 1], Fix32.Zero))
+        self._shift(n - 1)
+
 
 class Runtime_Delay_4(Module):
     name = "Control: Delay (4 ticks)"
@@ -88,12 +107,19 @@ class Runtime_Delay_4(Module):
     categories = [ DefaultCategories.Control ]
     controllers = [ DefaultControllers.Controller ]
 
+    OUT_NAMES = ["", "1", "2", "3", "4"]
+
     def action(self):
         a = self.Input.get("0", Fix32.Zero)
-        self.Output.set("4", self.Output.get("3", Fix32.Zero))
-        self.Output.set("3", self.Output.get("2", Fix32.Zero))
-        self.Output.set("2", self.Output.get("1", Fix32.Zero))
+        self._shift(4)
         self.Output.set("1", a)
+
+    def _shift(self, n):
+        if n <= 1:
+            return
+        self.Output.set(self.OUT_NAMES[n], self.Output.get(self.OUT_NAMES[n - 1], Fix32.Zero))
+        self._shift(n - 1)
+
 
 class Runtime_Delay_6(Module):
     name = "Control: Delay (6 ticks)"
@@ -113,14 +139,19 @@ class Runtime_Delay_6(Module):
     categories = [ DefaultCategories.Control ]
     controllers = [ DefaultControllers.Controller ]
 
+    OUT_NAMES = ["", "1", "2", "3", "4", "5", "6"]
+
     def action(self):
         a = self.Input.get("0", Fix32.Zero)
-        self.Output.set("6", self.Output.get("5", Fix32.Zero))
-        self.Output.set("5", self.Output.get("4", Fix32.Zero))
-        self.Output.set("4", self.Output.get("3", Fix32.Zero))
-        self.Output.set("3", self.Output.get("2", Fix32.Zero))
-        self.Output.set("2", self.Output.get("1", Fix32.Zero))
+        self._shift(6)
         self.Output.set("1", a)
+
+    def _shift(self, n):
+        if n <= 1:
+            return
+        self.Output.set(self.OUT_NAMES[n], self.Output.get(self.OUT_NAMES[n - 1], Fix32.Zero))
+        self._shift(n - 1)
+
 
 class Runtime_Delay_8(Module):
     name = "Control: Delay (8 ticks)"
@@ -142,13 +173,15 @@ class Runtime_Delay_8(Module):
     categories = [ DefaultCategories.Control ]
     controllers = [ DefaultControllers.Controller ]
 
+    OUT_NAMES = ["", "1", "2", "3", "4", "5", "6", "7", "8"]
+
     def action(self):
         a = self.Input.get("0", Fix32.Zero)
-        self.Output.set("8", self.Output.get("7", Fix32.Zero))
-        self.Output.set("7", self.Output.get("6", Fix32.Zero))
-        self.Output.set("6", self.Output.get("5", Fix32.Zero))
-        self.Output.set("5", self.Output.get("4", Fix32.Zero))
-        self.Output.set("4", self.Output.get("3", Fix32.Zero))
-        self.Output.set("3", self.Output.get("2", Fix32.Zero))
-        self.Output.set("2", self.Output.get("1", Fix32.Zero))
+        self._shift(8)
         self.Output.set("1", a)
+
+    def _shift(self, n):
+        if n <= 1:
+            return
+        self.Output.set(self.OUT_NAMES[n], self.Output.get(self.OUT_NAMES[n - 1], Fix32.Zero))
+        self._shift(n - 1)

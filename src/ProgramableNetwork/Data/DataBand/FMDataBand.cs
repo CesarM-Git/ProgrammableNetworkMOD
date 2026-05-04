@@ -21,6 +21,8 @@ namespace ProgramableNetwork
 			Context = context;
 			m_redirected = new Lyst<FMDataBandChannel>();
 			m_active = [];
+			// Channel shells are created eagerly, but their signal buffers stay null
+			// until first Update — the pool warms them on demand and reclaims them on invalidation.
 			for (int i = 0; i < prototype.Channels; i++)
 			{
 				m_active.Add(new FMDataBandChannel() { Index = i, OriginalDataBand = this });
@@ -116,8 +118,8 @@ namespace ProgramableNetwork
 			{
 				if (item.ValidIterations-- == 0)
 				{
-					// After one second reset signal (no allocation — just clear length)
-					item.ClearValue();
+					// Buffer goes back to the pool; Id3 cleared. Channel shell stays.
+					item.Release();
 					item.Id3 = string.Empty;
 				}
 			}
@@ -128,37 +130,42 @@ namespace ProgramableNetwork
 			}
 		}
 
-		public void Update(int index, Fix32[] value, int length, bool logging = false)
+		public void Update(int index, Fix32[] src, int count, bool logging = false)
 		{
-			m_active[index].WriteValue(value, length);
-			m_active[index].ValidIterations = 60;
+			var slot = m_active[index];
+			slot.Acquire();
+			Array.Copy(src, slot.Value, count);
+			slot.Count = count;
+			slot.ValidIterations = 60;
 
 			if (logging)
 			{
-				Log.Info($"[FMDataBand] Written [{index}]: {length}, [{string.Join(",", value.Take(length))}]");
+				Log.Info($"[FMDataBand] Written [{index}]: {count}, [{string.Join(",", slot.Value.Take(count))}]");
 			}
 		}
 
-		/// <summary>
-		/// Returns the internal signal buffer and its valid length for the given channel.
-		///
-		/// Unlike AM (which returns a simple Fix32 copy), FM channels carry multi-value arrays.
-		/// Returning the internal buffer directly avoids allocating a copy on every read — which
-		/// matters because this is called per-module per-tick. This is safe because all current
-		/// callers consume the data immediately within the same tick (FMDataBandChannel.Update
-		/// copies it via WriteValue; the FM Receiver module reads individual elements inline).
-		///
-		/// If a future caller needs to store the data across ticks, it should copy into its own
-		/// buffer rather than holding this reference, since the channel may overwrite or clear it.
-		/// </summary>
-		public (Fix32[] data, int length) Read(int index)
+		public FMDataBandChannel GetChannel(int index)
 		{
-			var channel = m_active[index];
-			if (channel.ValidIterations > 0)
+			return m_active[index];
+		}
+
+		/// <summary>
+		/// Direct band-to-band channel transfer using a single Array.Copy between the two
+		/// pre-allocated pool buffers — no per-tick allocation.
+		/// </summary>
+		public void CopyChannelInto(int index, FMDataBand dest)
+		{
+			var s = m_active[index];
+			var d = dest.m_active[index];
+			if (s.Value == null || s.Count == 0)
 			{
-				return (channel.Value, channel.ValueLength);
+				d.Release();
+				return;
 			}
-			return (Array.Empty<Fix32>(), 0);
+			d.Acquire();
+			Array.Copy(s.Value, d.Value, s.Count);
+			d.Count = s.Count;
+			d.ValidIterations = s.ValidIterations;
 		}
 
 		public void CreateChannel()

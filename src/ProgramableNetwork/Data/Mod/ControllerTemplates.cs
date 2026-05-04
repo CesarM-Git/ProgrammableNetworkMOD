@@ -22,9 +22,18 @@ namespace ProgramableNetwork.Data.Mod
     {
         private static List<Class> UserTemplates = [];
 
+        // Materialised at proto-registration time so the runtime picker
+        // (PickControllerTemplate) can iterate templates without needing a
+        // ProtoRegistrator (which isn't DI-resolvable post-load).  The lambdas
+        // inside each ControllerTemplate retain their captured registrator
+        // reference and remain callable when applied to a live controller.
+        private static List<ControllerTemplate> s_cachedTemplates = new List<ControllerTemplate>();
+        public static IReadOnlyList<ControllerTemplate> CachedTemplates => s_cachedTemplates;
+
         public static void Clear()
         {
             UserTemplates.Clear();
+            s_cachedTemplates.Clear();
         }
 
         protected override void RegisterDataInternal(ProtoRegistrator registrator)
@@ -79,7 +88,11 @@ The controller can use maintenance from T1 to T3 base on layout of the modules:
             ControllerProto.RegisterPhantom(registrator);
 
             ControllerProto template = null;
-            IEnumerable<ControllerTemplate> values = GetControllerTemplates(registrator, originalTier1);
+            // Materialise once and reuse for both the per-template proto registration
+            // (legacy path, below) and the new runtime picker — the lambdas closed over
+            // the registrator must outlive RegisterDataInternal.
+            s_cachedTemplates = new List<ControllerTemplate>(GetControllerTemplates(registrator, originalTier1));
+            IEnumerable<ControllerTemplate> values = s_cachedTemplates;
             foreach (var (id, name, description, color, modules) /* Expand */ in values)
             {
                 TryLoadTexture(NewAssets.Computers.Icons.ControllerTemplate(id), registrator);
@@ -196,13 +209,13 @@ The controller can use maintenance from T1 to T3 base on layout of the modules:
             ModuleProto storageProto = registrator.PrototypesDb.Get<ModuleProto>(new Proto.ID(moduleProto.ModuleId())).Value;
             Module module = new Module(storageProto, controller.Context, controller);
 
+            // Position is owned by the module itself since Controller.MODULE_LAYOUT_INFO.
+            module.Row = row;
+            module.Column = column;
             controller.Modules.Add(module);
             controller.InvalidateModuleLookup();
-            controller.Rows[row][column++] = ModulePlacement.Origin(module.Id);
             int width = module.Layout.GetWidth(module);
-            for (int j = 1; j < width; j++) {
-                controller.Rows[row][column++] = ModulePlacement.Rest(module.Id);
-            }
+            column += width;
 
             Thread.Sleep(1); // increment module id, because is based on time
             return module;

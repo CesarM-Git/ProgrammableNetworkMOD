@@ -91,6 +91,14 @@ namespace ProgramableNetwork
                 "Ticks per 60 seconds", "controller inspector: tooltip for the speed display");
             public static readonly LocStr Modules = Loc.Str("ProgramableNetwork_Inspector_Modules",
                 "Modules", "controller inspector: panel header above the module grid");
+            public static readonly LocStr Mode_Edit = Loc.Str("ProgramableNetwork_Inspector_Mode_Edit",
+                "Edit", "controller inspector: header toggle — only field floaters are usable, no add/move");
+            public static readonly LocStr Mode_Add = Loc.Str("ProgramableNetwork_Inspector_Mode_Add",
+                "Add", "controller inspector: header toggle — clicking a module copies it; '+' slots add new modules");
+            public static readonly LocStr Mode_Move = Loc.Str("ProgramableNetwork_Inspector_Mode_Move",
+                "Move", "controller inspector: header toggle — pick up a module by click, drop it on a free slot");
+            public static readonly LocStr Mode_PickedUp = Loc.Str("ProgramableNetwork_Inspector_Mode_PickedUp",
+                "Picked up — click free slot to drop", "controller inspector: status hint shown next to mode toggle while a module is being moved");
             public static readonly LocStr All = Loc.Str("ProgramableNetwork_Inspector_All",
                 "All", "module picker: button that selects all category filters at once");
             public static readonly LocStr ControllerColor = Loc.Str("ProgramableNetwork_Inspector_ControllerColor",
@@ -109,6 +117,19 @@ namespace ProgramableNetwork
                 "Add new module", "controller inspector: helper hint for left-click to add a module");
             public static readonly LocStr AddFromTemplate = Loc.Str("ProgramableNetwork_Inspector_AddFromTemplate",
                 "Add from template", "controller inspector: helper hint for right-click to add from a template");
+
+            public static readonly LocStr Connections = Loc.Str("ProgramableNetwork_Inspector_Connections",
+                "Connections", "controller inspector: panel header for the per-module entity connections list");
+            public static readonly LocStr ConnectionsEmpty = Loc.Str("ProgramableNetwork_Inspector_ConnectionsEmpty",
+                "No entity-bound fields", "controller inspector: shown in connections panel when no module has any entity field");
+            public static readonly LocStr ConnectionsHintEdit = Loc.Str("ProgramableNetwork_Inspector_ConnectionsHintEdit",
+                "Pick / change entity", "connections panel: helper hint for left-click on a slot");
+            public static readonly LocStr ConnectionsHintCopyNext = Loc.Str("ProgramableNetwork_Inspector_ConnectionsHintCopyNext",
+                "Apply last picked entity (if valid here)", "connections panel: helper hint for shift+click — applies the most recently picked entity to this slot if it passes the slot's filter and distance check");
+            public static readonly LocStr ConnectionsHintClear = Loc.Str("ProgramableNetwork_Inspector_ConnectionsHintClear",
+                "Clear entity", "connections panel: helper hint for right-click on a slot");
+            public static readonly LocStr ConnectionsHintPan = Loc.Str("ProgramableNetwork_Inspector_ConnectionsHintPan",
+                "Pan camera to entity", "connections panel: helper hint for middle-click on a slot");
 
             public static readonly LocStr Active = Loc.Str("ProgramableNetwork_Inspector_Active",
                 "Active", "speaker / light inspector: row label for the on/off toggle");

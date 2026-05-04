@@ -272,7 +272,7 @@ namespace ProgramableNetwork.Ui
 			m_signalPanel.Header.Add(new UiComponent().FlexGrow(1)); // filler
 			m_signalPanel.Header.AddAndReturn(new ButtonText(new Mafi.Localization.LocStrFormatted("+")))
 				.OnClick(() => {
-					Entity.DataBand.CreateChannel();
+					Context.InputScheduler.ScheduleInputCmd(new AntenaCreateRedirectedChannelCmd(Entity.Id));
 					m_signalPanel.Collapsed(false);
 					RefreshRedirections(Entity.DataBand);
 				})
@@ -334,8 +334,8 @@ namespace ProgramableNetwork.Ui
 
 				if (!m_onLoading)
 				{
-					Entity.DataBand = m_databands[tabContainer.ActiveTabIndex ?? 0]
-											.Constructor(Entity, Entity.Context, m_databands[tabContainer.ActiveTabIndex ?? 0]);
+					Context.InputScheduler.ScheduleInputCmd(new AntenaSetDataBandCmd(
+						Entity.Id, m_databands[tabContainer.ActiveTabIndex ?? 0].Id));
 				}
 
 				RefreshRedirections(Entity.DataBand);
@@ -395,7 +395,7 @@ namespace ProgramableNetwork.Ui
 				(m_dataBandChannel?.Id3?.IsNullOrEmpty() ?? true ? "N/A" : m_dataBandChannel.Id3)
 				.AsLoc());
 			m_dataCount = AddAndReturn(new Display("0".AsLoc())).Width(24.px());
-			m_dataCount.ObserveValue(() => m_dataBandChannel?.ValueLength ?? 0);
+			m_dataCount.ObserveValue(() => m_dataBandChannel?.Count ?? 0);
 			m_gotoButton = new ButtonIcon(Mafi.Unity.Assets.Unity.UserInterface.General.Search_svg)
 				.Height(24.px())
 				.OnClick(panToSourceAntenna);

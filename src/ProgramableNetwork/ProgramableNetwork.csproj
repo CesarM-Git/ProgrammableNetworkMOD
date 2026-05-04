@@ -12,6 +12,7 @@
 		<!--<COI_ROOT>STEAMAPPS_COMMON\Captain of Industry</COI_ROOT>-->
 
 		<!-- Environment or project variable 'COI_MODS' must be set. -->
+		<!--<COI_MODS>$(APPDATA)\Captain of Industry\Mods</COI_MODS> -->
 
 		<!-- When the name of unity project is changed, the destionation folder must be adjusted -->
 		<UnityProjectName>ExampleMod.Unity</UnityProjectName>
@@ -154,6 +155,9 @@
 		</Reference>
 		<Reference Include="UnityEngine.UIModule">
 			<HintPath>$(COI_ROOT)\Captain of Industry_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine.IMGUIModule">
+			<HintPath>$(COI_ROOT)\Captain of Industry_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
 		</Reference>
 		<Reference Include="UnityEngine.TerrainPhysicsModule">
 			<HintPath>$(COI_ROOT)\Captain of Industry_Data\Managed\UnityEngine.TerrainPhysicsModule.dll</HintPath>
@@ -330,11 +334,14 @@
 		<Copy SourceFiles="$(ProjectDir)\config.json" DestinationFolder="$(COI_MODS)\$(TargetName)" ContinueOnError="true" />
 		<Copy SourceFiles="$(TargetPath)" DestinationFolder="$(COI_MODS)\$(TargetName)\" />
 		<Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(COI_MODS)\$(TargetName)\" Condition="'$(Configuration)' == 'Debug'" />
-		<Copy SourceFiles="@(AssetBundles)" DestinationFolder="$(COI_MODS)\$(TargetName)\AssetBundles" />
+		<!-- TODO add automatically another dll, when needed -->
+		<Copy SourceFiles="@(AssetBundles)" DestinationFolder="$(COI_MODS)\$(TargetName)\AssetBundles" ContinueOnError="true" />
 		<Copy SourceFiles="@(Assets)" DestinationFolder="$(COI_MODS)\$(TargetName)\Assets\%(RecursiveDir)" />
 		<Copy SourceFiles="@(Modules)" DestinationFolder="$(COI_MODS)\$(TargetName)\Modules\%(RecursiveDir)" />
 		<Copy SourceFiles="@(CoreAPI)" DestinationFolder="$(COI_MODS)\$(TargetName)\Modules\Core\%(RecursiveDir)" />
-		<Exec Command="pwsh -NoProfile -Command &quot;Compress-Archive -Path '$(COI_MODS)\$(TargetName)' -DestinationPath '$(COI_MODS)\$(TargetName)_$(ManifestVersion).zip' -Force&quot;" />
 		<Copy SourceFiles="@(Translations)" DestinationFolder="$(COI_MODS)\$(TargetName)\Translations\%(RecursiveDir)" />
+
+		<!-- Compress-Archive on a directory path (without \*) includes the directory name as root in the zip. -->
+		<Exec Command="pwsh -NoProfile -Command &quot;Compress-Archive -Path '$(COI_MODS)\$(TargetName)' -DestinationPath '$(COI_MODS)\$(TargetName)_$(ManifestVersion).zip' -Force&quot;" />
 	</Target>
 </Project>

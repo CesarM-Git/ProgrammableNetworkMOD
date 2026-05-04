@@ -10,16 +10,19 @@ using Mafi.Unity.Camera;
 using Mafi.Unity.Entities;
 using Mafi.Unity.InputControl;
 using Mafi.Unity.Ui;
+using Mafi.Unity.Ui.Hud;
 using Mafi.Unity.Ui.Library;
 using Mafi.Unity.Ui.Library.Inspectors;
 using Mafi.Unity.UiStatic.Cursors;
 using Mafi.Unity.UiToolkit.Component;
 using Mafi.Unity.UiToolkit.Library;
 using Mafi.Unity.UiToolkit.Library.FloatingPanel;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Mafi.Core.Console;
 using Mafi.Core.Research;
+using Mafi.Unity.UiToolkit;
 using ProgramableNetwork.Data.Variables;
 using UnityEngine;
 using static Mafi.Unity.Assets.Unity;
@@ -40,12 +43,41 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 	private readonly ControllerView m_view;
 	private readonly ButtonIcon m_colorButton;
 	private readonly VariableWindowController m_variableWindowController;
+	private readonly PlcPyCodeEditorWindowController m_plcPyCodeEditorWindowController;
 
 	// TODO
 	public ModuleConnector m_higlightedOutput;
 	public ModuleConnector m_higlightedInput;
 	public bool m_showsLinks;
 	public IGameConsole m_console;
+
+	/// <summary>
+	/// When non-null, the corresponding ModuleView will paint a cable-style highlight
+	/// on its central button.  Set by <see cref="EntityConnectionsView"/> on row hover.
+	/// </summary>
+	public Module HighlightedFromSidePanel;
+
+	/// <summary>
+	/// When non-null, the matching section in <see cref="EntityConnectionsView"/> is
+	/// highlighted.  Set by <see cref="ControllerView.ModuleView"/> on the module's
+	/// fieldsPanel hover so the user can see which side-panel entry owns the configuration
+	/// for the module they're pointing at on the grid.
+	/// </summary>
+	public Module HoveredModuleGraphic;
+
+	/// <summary>
+	/// Active editor mode toggled by buttons in the Modules panel header.  Defaults to
+	/// <see cref="ControllerEditMode.Edit"/>.  Read by <see cref="ControllerView.ModuleView"/>
+	/// to decide what a click on a module does, and by free-slot rendering to decide whether
+	/// '+' adders are interactive.
+	/// </summary>
+	public ControllerEditMode Mode { get; set; } = ControllerEditMode.Edit;
+
+	/// <summary>
+	/// When non-null in <see cref="ControllerEditMode.Move"/>, the user has clicked this
+	/// module to "pick it up"; the next click on a free slot drops it there.
+	/// </summary>
+	public Module PickedUpModule;
 
 	public ResearchManager ResearchManager { get; }
 
@@ -57,6 +89,7 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 		//TerrainCursor terrainCursor,
 		CameraController cameraController,
 		VariableWindowController variableWindowController,
+		PlcPyCodeEditorWindowController plcPyCodeEditorWindowController,
 		NewInstanceOf<EntityHighlighter> entityHighlighter,
 		NewInstanceOf<EntityHighlighter> entityHighlighterSelectable,
 		LinesFactory linesFactory,
@@ -77,61 +110,150 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 		m_invalidOpSound = context.AudioDb.InvalidOp();
 		m_console = console;
 		m_variableWindowController = variableWindowController;
+		m_plcPyCodeEditorWindowController = plcPyCodeEditorWindowController;
+
+		// Wider than the default 650px inspector so the module grid + cable corridors
+		// + side connections panel all have room without crowding.
+		WindowSize(750.px(), Px.Auto);
 
 		ProgressBar bar;
-		AddPanelRow(
-				new Label()
-					.LaterText(() => NewTr.Inspector.ComputingSpeed, this)
-					.TextAlign(TextAlignment.LeftMiddle),
-				new UiComponent().Fill(),
-				bar = new ProgressBar()
-					.HeightAuto()
-					.Width(150),
-				new Display()
-					.Value(0)
-					.Width(150)
-					.LaterText<Display>(() => NewTr.Inspector.ComputingSpeedTooltip, this, (d, v) => d.Tooltip(v))
-					.ObserveValue(() => $"{(600 / (1f + Entity.Speed)).ToFix32().ToStringRounded(0)} t/m"),
-				new ButtonText("-".AsLoc())
-					.TextAlign(TextAlignment.CenterMiddle)
-					.Width(50)
-					.OnClick(() => Entity.Speed++)
-					.ObserveEnabled(() => Entity.Speed < 29),
-				new ButtonText("+".AsLoc())
-					.TextAlign(TextAlignment.CenterMiddle)
-					.Width(50)
-					.OnClick(() => Entity.Speed--)
-					.ObserveEnabled(() => Entity.Speed > 0)
-			)
-			.BodyGap(5.px());
+		StatusRow.Clear();
+		StatusRow.Gap(5.px());
 
-		bar.ObserveVisibleForRender(() => Entity.Speed >= 10)
-			.Observe(() => Entity.Speed)
-			.Observe(() => Entity.Clock)
-			.Observe(() => Entity.IsEnabled)
-			.Do((speed, clock, enabled) => {
-				bar.Color(enabled ? ColorRgba.GreenYellow : ColorRgba.DarkYellow);
-				if (speed == clock) {
-					bar.Value(Percent.Hundred);
-				}
-				else {
-					bar.ValueFromRatio(clock, speed);
-				}
-			});
+		// Combined speed widget — Label showing the live tick rate plus compact
+		// -/+ ButtonIcons, all inside a single DisplayRow.  DisplayRow already
+		// provides the display font + glass background, so a plain Label inside
+		// renders in the right style without needing a nested Display.
+		DisplayRow speedControl = new DisplayRow();
+		speedControl.LaterText<DisplayRow>(() => NewTr.Inspector.ComputingSpeedTooltip, this, (d, v) => d.Tooltip(v));
+		Label speedLabel = new Label(LocStrFormatted.Empty)
+			.Width(70.px())
+			.TextAlign(TextAlignment.RightMiddle);
+		speedLabel.Observe(() => Entity?.DelayBetweenTicks ?? 0)
+				  .Do(d => speedLabel.Value(new LocStrFormatted(
+					  $"{(600 / (1f + d)).ToFix32().ToStringRounded(0)} t/m")));
+		ButtonIcon decBtn = new ButtonIcon(Button.IconOnly, UserInterface.General.Minus128_png)
+			.Size(20.px(), 20.px())
+			.IconSize(16.px(), 16.px())
+			.OnClick(() => Entity.DelayBetweenTicks++);
+		decBtn.Icon.AbsolutePositionCenterMiddle();
+		decBtn.ObserveEnabled(() => Entity.DelayBetweenTicks < 29);
+		ButtonIcon incBtn = new ButtonIcon(Button.IconOnly, UserInterface.General.Plus128_png)
+			.Size(20.px(), 20.px())
+			.IconSize(16.px(), 16.px())
+			.OnClick(() => Entity.DelayBetweenTicks--);
+        incBtn.Icon.AbsolutePositionCenterMiddle();
+		incBtn.ObserveEnabled(() => Entity.DelayBetweenTicks > 0);
+		speedControl.Row.Add(speedLabel, decBtn, incBtn);
+
+		StatusRow.Add(
+			Status,
+			new UiComponent().Fill(),
+			new Label()
+				.LaterText(() => NewTr.Inspector.ComputingSpeed, this)
+				.TextAlign(TextAlignment.RightMiddle),
+			// Fixed height — StatusRow constrains its children to a slim strip and
+			// HeightAuto would collapse the bar to ~0 px.  Default invisible because
+			// the observer below only flips it on once the player picks a delay
+			// >= 10 ticks (otherwise the bar would just blink full each tick).
+			(bar = new ProgressBar()
+				.Height(Sizes.BLOCK_SIZE)
+				.Width(150)
+				.Visible(false)),
+			speedControl
+		);
+
+        this.Observe(() => Entity.DelayBetweenTicks)
+            .Observe(() => Entity.Clock)
+            .Observe(() => Entity.IsEnabled)
+            .Do((speed, clock, enabled) => {
+				if (speed < 10)
+				{
+					bar.Visible(false);
+					return;
+                }
+				bar.Visible(true);
+                bar.Color(enabled ? ColorRgba.GreenYellow : ColorRgba.DarkYellow);
+                if (speed == clock)
+                {
+                    bar.Value(Percent.Hundred);
+                }
+                else
+                {
+                    bar.ValueFromRatio(clock, speed);
+                }
+            });
+
+        // Description button + module-count chip live in the inspector's
+        // TopLeftDisplays row (BaseInspector's actual left-side header — Window's
+        // LeftHeaderButtons sit in the title bar and don't render here).
+        // Click on the button opens a fresh FloatingColumn dialog because Mafi's
+        // .Floater()/.FloaterInteractive() are tooltip-based (hover, not click).
+        ButtonIcon descBtn = new ButtonIcon(Button.Header, UserInterface.General.Edit_svg);
+		descBtn.Tooltip("Controller description (also lists modules)".ToDoLoc());
+		descBtn.OnClick(() =>
+		{
+			if (Entity == null) {
+				return;
+			}
+			openDescriptionDialog(descBtn);
+		});
+		TopLeftDisplays.Add(descBtn);
+
+		// At-a-glance module count next to the description button — same pattern as
+		// the VariableHudDisplay (button + Display chip).  Saves a click for the
+		// common "how many modules does this controller have" question without
+		// having to open the dialog.
+		Display moduleCountDisplay = new Display("0".AsLoc()).Width(40.px());
+		moduleCountDisplay.TextCenterMiddle();
+		moduleCountDisplay.Tooltip("Number of modules in this controller".ToDoLoc());
+		moduleCountDisplay.ObserveValue(() => Entity?.Modules?.Count ?? 0);
+		TopLeftDisplays.Add(moduleCountDisplay);
+
+        // Show main body, there is no AddPanel method used, must be set manually
+		this.MainBody.Show();
+
+        Row panels = this.MainBody.AddAndReturn(new Row())
+			.HeightAuto()
+			.Gap(5.px());
+		// align to top so the connections panel doesn't end up in the middle when there are few modules
+		panels.JustifyItemsStart();
+		panels.AlignItemsStart();
 
 		// UI
-		m_modulesPanel = AddPanelWithHeader();
+		m_modulesPanel = panels.AddAndReturn(new PanelWithHeader().Fill().HeightAuto());
 		m_modulesPanel.Header.Add(
 			new Label()
 				.LaterText(() => NewTr.Inspector.Modules, this)
 				.FlexGrow(1)
 				.TextAlign(TextAlignment.CenterMiddle)
 			);
-		m_modulesPanel.Add(m_view = new ControllerView(this, refresh).AlignSelfCenter());
+		AddModeToggle(m_modulesPanel.Header);
+		m_modulesPanel.BodyAdd(m_view = new ControllerView(this, refresh));
+
+		PanelWithHeader connectionsPanel = panels.AddAndReturn(new PanelWithHeader().Fill().HeightAuto());
+		connectionsPanel.Header.Add(
+			new Label()
+				.LaterText(() => NewTr.Inspector.Connections, this)
+				.FlexGrow(1)
+				.TextAlign(TextAlignment.CenterMiddle)
+			);
+		EntityConnectionsView connectionsView = new EntityConnectionsView(this);
+		connectionsPanel.BodyAdd(connectionsView);
 
 		HeaderButtons.AddAndReturn(new ButtonIcon(Button.Header, UserInterface.General.Connect128_png))
 			.OnClick(() => GlobalDependencyResolver.Get<ConnectionInfo>().Open(context.UiRoot))
 			.OnMouseEnterLeave(addPreviewHighlightAll, ClearPreviewHighlight);
+
+		// "Save controller as blueprint" — dual to the per-module save button in
+		// ModuleEditDialog.  Snapshots the entire controller (modules, layout,
+		// internal cables, color, speed) into BlueprintsLibrary as
+		// [PN-Controller]-<name> so the player can paste it elsewhere via the
+		// base-game blueprint browser.
+		ButtonIcon saveCtrlBp = new ButtonIcon(Button.Header, UserInterface.General.Save_svg);
+		saveCtrlBp.Tooltip("Save this controller (with modules) as a reusable blueprint".ToDoLoc());
+		saveCtrlBp.OnClick(() => SaveBlueprintDialog.ForController(Entity, saveCtrlBp, context));
+		HeaderButtons.Add(saveCtrlBp);
 
 		m_colorButton = new ButtonIcon(UserInterface.Cursors.Paint32_png);
 		m_colorButton.Observe(() => Entity.Color)
@@ -147,12 +269,9 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 
 		TopRightButtons.Add(m_colorButton);
 
-		EmbedStatusToTheTop();
-
 		this.Observe(() => Entity)
 			.Observe(() => Entity?.Modules)
-			.Observe(() => Entity?.Rows)
-			.Do((entity, module, rows) => refresh());
+			.Do((entity, modules) => refresh());
 
 		this.Observe(() => Entity?.State)
 			.Do((state) => {
@@ -160,9 +279,149 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 			});
 	}
 
+	// Opens a fresh FloatingColumn each click anchored to the description button.
+	// Re-creating per-click keeps observer wiring simple — the dialog binds to the
+	// inspector's current Entity at the moment it opens.
+	//
+	// Layout: two stacked PanelRows with PanelStyleHud backgrounds and a small
+	// gap between them — no horizontal divider, the panel borders do the visual
+	// separation.  Each panel has a fixed ~10-line height; overflow scrolls
+	// internally so the dialog stays the same size regardless of how much text
+	// the player wrote or how many modules the controller has.
+	private void openDescriptionDialog(Button anchor)
+	{
+		FloatingColumn dialog = new FloatingColumn(
+			new DropdownPositionPolicy(), false, false, true);
+		dialog.Gap(5.px());
+
+		// Approx 10 lines of text — TextField/Label line-height runs ~18px so we
+		// pick a round 200px (handier than fiddling per-renderer line metrics).
+		const float TEN_LINES_PX = 200f;
+
+		// --- Description editor panel -------------------------------------------------
+		PanelRow descPanel = dialog.AddAndReturn(new PanelRow(noBolts: true).PanelStyleHud());
+		descPanel.Width(420.px());
+		descPanel.Height(Px.Auto);
+
+		TextField descEditor = new TextField()
+			.Width(400.px())
+			.Height(TEN_LINES_PX.px());
+		descEditor.Multiline(true);
+		descEditor.OnValueChanged(text =>
+		{
+			if (Entity == null) {
+				return;
+			}
+			Entity.CustomDescription = string.IsNullOrEmpty(text) ? Option<string>.None : text.SomeOption();
+		});
+		descEditor.Observe(() => Entity)
+				  .Observe(() => Entity?.CustomDescription)
+				  .Do((entity, desc) =>
+				  {
+					  string current = entity?.CustomDescription.HasValue == true
+						  ? entity.CustomDescription.Value
+						  : "";
+					  if (descEditor.GetText() != current)
+					  {
+						  descEditor.Value(new LocStrFormatted(current ?? ""));
+					  }
+				  });
+		descPanel.BodyAdd(c => c.Padding(8), descEditor);
+
+		// --- Module list panel --------------------------------------------------------
+		PanelRow listPanel = dialog.AddAndReturn(new PanelRow(noBolts: true).PanelStyleHud());
+		listPanel.Width(420.px());
+		listPanel.Height(Px.Auto);
+
+		// ScrollColumn holds the module-list Label; overflow scrolls inside the
+		// panel rather than pushing the whole dialog taller.  Width matches the
+		// editor and accounts for the standard 17 px scroll-bar gutter.
+		ScrollColumn listScroll = new ScrollColumn();
+		listScroll.Width(400.px());
+		listScroll.Height(TEN_LINES_PX.px());
+
+		Label moduleListLabel = new Label(LocStrFormatted.Empty)
+			.TextOverflow(TextOverflow.Wrap);
+		moduleListLabel.Observe(() => Entity)
+					   .Observe(() => Entity?.Modules?.Count)
+					   .Do((entity, _count) =>
+					   {
+						   string list = entity == null ? "" : buildModuleListLabel(entity);
+						   moduleListLabel.Value(new LocStrFormatted(list));
+					   });
+		listScroll.Add(moduleListLabel);
+		listPanel.BodyAdd(c => c.Padding(8), listScroll);
+
+		dialog.Width(440.px());
+		dialog.Height(Px.Auto);
+		dialog.Open(anchor);
+	}
+
+	// Renders only the auto-appended "Modules: …" tail used by the description
+	// panel.  Kept symmetric with Controller.GetFullDescription's tail half so
+	// the two stay in lock-step if module display formatting ever changes.
+	private static string buildModuleListLabel(Controller entity)
+	{
+		System.Text.StringBuilder sb = new System.Text.StringBuilder();
+		sb.Append("Modules:");
+		if (entity.Modules == null || entity.Modules.Count == 0)
+		{
+			sb.Append(" (none)");
+		}
+		else
+		{
+			foreach (Module m in entity.Modules)
+			{
+				if (m?.Prototype == null) {
+					continue;
+				}
+				sb.Append("\n  ");
+				sb.Append(m.Prototype.Symbol);
+				sb.Append("  ");
+				sb.Append(m.Prototype.Strings.Name.TranslatedString);
+			}
+		}
+		return sb.ToString();
+	}
+
 	private void refresh() {
 		if (Entity is null) {
 			m_view.RedrawComponents();
+		}
+	}
+
+	private void AddModeToggle(RowContainer header)
+	{
+		// Three buttons (Edit / Add / Move) acting as a single-selection group.
+		// Active button is restyled via Cls.btn_primary; others use Cls.btn_general
+		// — same pattern used elsewhere (e.g. ModuleView's running/idle state).
+		var modes = new (ControllerEditMode mode, Func<LocStr> label)[]
+		{
+			(ControllerEditMode.Edit, () => NewTr.Inspector.Mode_Edit),
+			(ControllerEditMode.Add,  () => NewTr.Inspector.Mode_Add),
+			(ControllerEditMode.Move, () => NewTr.Inspector.Mode_Move),
+		};
+
+		foreach ((ControllerEditMode mode, Func<LocStr> labelGetter) in modes)
+		{
+			ButtonText btn = new ButtonText(new LocStrFormatted(""))
+				.Class(Cls.btn_toggleGroup)
+				.Height(Sizes.BLOCK_SIZE)
+				.Width(Sizes.BLOCK_SIZE * 2.5f);
+			btn.LaterText(labelGetter, this, (btn, v) => btn.Value(v));
+			btn.OnClick(() => {
+				if (Mode == ControllerEditMode.Move && mode != ControllerEditMode.Move)
+				{
+					// Leaving Move mode drops anything that was picked up.
+					PickedUpModule = null;
+				}
+				Mode = mode;
+				m_view.RedrawComponents();
+			});
+			btn.Observe(() => Mode).Do(active => {
+				btn.Selected(active == mode);
+			});
+			header.Add(btn);
 		}
 	}
 
@@ -176,6 +435,7 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 	public ModuleConnector OutputConnection { get; internal set; }
 	public CameraController CameraController { get; }
 	public VariableWindowController VariableWindowController => m_variableWindowController;
+	public PlcPyCodeEditorWindowController PlcPyCodeEditorWindowController => m_plcPyCodeEditorWindowController;
 
 	public override bool InputUpdate() {
 		if (EntitySelectionInput != null) {

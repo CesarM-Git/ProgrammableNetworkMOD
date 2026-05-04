@@ -19,16 +19,43 @@ using Mafi.Core.Entities.Static;
 using Mafi.Core.Notifications;
 using ProgramableNetwork.Data.Mod;
 using System.Reflection;
+using Mafi.Collections.ImmutableCollections;
 using Mafi.Localization;
 using Mafi.Core.Factory.Transports;
 using Mafi.Core.Research;
 
 namespace ProgramableNetwork
 {
-	[GenerateSerializer(false, null, 0)]
+	[ManuallyWrittenSerialization]
 	public class Controller : LayoutEntityBase, IAreaSelectableEntity, IEntityWithCloneableConfig, IEntityWithSimUpdate,
 		IUnityConsumingEntity, IComputingConsumingEntity, IElectricityConsumingEntity, IMaintainedEntity, IObjectWithCustomTitle
 	{
+		// Serialization version where the per-cell layout grid (Controller.Rows) was
+		// dropped and each Module started carrying its own (Row, Column). Used by both
+		// Controller and Module deserialization for version-gated reads.
+		public const int MODULE_LAYOUT_INFO = 4;
+
+		// Serialization version where Module's optional containers (the five Number/
+		// String dicts, InputModules, and the new Fix32[] ArrayData scratch buffer)
+		// are gated behind a single byte bitmask so empty containers cost nothing
+		// on disk.  Older saves read each dict unconditionally; v5+ writes only the
+		// populated ones.  ArrayData was introduced in this same version — pre-v5
+		// modules load with an empty array.
+		public const int MODULE_COMPACT_DATA = 5;
+
+		// Controller serialization version where the per-instance CustomDescription
+		// field was added.  Earlier saves load with no description set; a fresh
+		// CustomDescription = None is the safe default.
+		public const int CONTROLLER_DESCRIPTION = 5;
+
+		// Serialization version where the PLC (player-authored Python) module
+		// landed.  The DataFlags byte gained a CodeMetadata bit (1 << 7) so PLC
+		// instances can persist their cached lexer-node count alongside the
+		// existing dicts; pre-v6 modules read with that bit absent and a
+		// node count of 0 (re-tokenized on first execute).  Forward-compatible
+		// with non-PLC modules — they simply never set the bit.
+		public const int MODULE_PYTHON_CODE = 6;
+
 		private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction = delegate(object obj, BlobWriter writer)
 		{
 			((Controller) obj).SerializeData(writer);
@@ -39,6 +66,49 @@ namespace ProgramableNetwork
 		};
 
 		public Option<string> CustomTitle { get; set; }
+
+		// Player-writable free-form description.  Auto-populated when a template/
+		// blueprint is applied via the picker (set to the template's description),
+		// editable in the inspector after that.  The on-screen rendering ALWAYS
+		// has the live module list appended via <see cref="GetFullDescription"/> —
+		// only the user-supplied prefix is persisted here.
+		public Option<string> CustomDescription { get; set; }
+
+		/// <summary>
+		/// Returns the user-supplied description (if any) followed by an auto-generated
+		/// list of every module currently on the controller.  The module-list tail is
+		/// always present so a player browsing the inspector can see what's inside even
+		/// when no description was authored.  Computed on demand — module list reflects
+		/// the live state.
+		/// </summary>
+		public string GetFullDescription()
+		{
+			System.Text.StringBuilder sb = new System.Text.StringBuilder();
+			if (CustomDescription.HasValue && !string.IsNullOrEmpty(CustomDescription.Value))
+			{
+				sb.Append(CustomDescription.Value);
+				sb.Append("\n\n");
+			}
+			sb.Append("Modules:");
+			if (Modules == null || Modules.Count == 0)
+			{
+				sb.Append(" (none)");
+			}
+			else
+			{
+				foreach (Module m in Modules)
+				{
+					if (m?.Prototype == null) {
+						continue;
+					}
+					sb.Append("\n  ");
+					sb.Append(m.Prototype.Symbol);
+					sb.Append("  ");
+					sb.Append(m.Prototype.Strings.Name.TranslatedString);
+				}
+			}
+			return sb.ToString();
+		}
 
 		public Controller(EntityId id, ControllerProto proto, TileTransform transform, EntityContext context,
 			IEntityMaintenanceProvidersFactory maintenanceProvidersFactory, ResearchManager researchManager)
@@ -56,16 +126,6 @@ namespace ProgramableNetwork
 			m_notificationErrorManager = Context.NotificationsManager.CreateNotificatorFor(ControllerNotification.ErrorNotification);
 			ResearchManager = researchManager;
 			Modules = new Lyst<Module>();
-			Rows = new Lyst<Lyst<ModulePlacement>>();
-			for (int i = 0; i < Prototype.Rows; i++)
-			{
-				Lyst<ModulePlacement> row = new Lyst<ModulePlacement>();
-				for (int j = 0; j < Prototype.Columns; j++)
-				{
-					row.Add((ModulePlacement)(0, true));
-				}
-				Rows.Add(row);
-			}
 
 			Action initSettings = proto.InitModules(this);
 			foreach (Module module in Modules)
@@ -107,9 +167,16 @@ namespace ProgramableNetwork
 			// TODO copy modules, name, entity connections, ...
 			data.Set<StaticEntityProto.ID>("controller_proto", m_protoId, (str, blob) => blob.WriteString(str.Value));
 			data.SetArray<Module>("controller_modules", Modules.ToImmutableArray(), Module.Serialize);
-			data.SetArray<Lyst<ModulePlacement>>("controller_rows", Rows.ToImmutableArray(), Lyst<ModulePlacement>.Serialize);
-			data.SetInt("controller_speed", Speed);
+			// Module positions are carried on the modules themselves since MODULE_LAYOUT_INFO,
+			// so no separate "controller_rows" entry is needed.
+			data.SetInt("controller_speed", DelayBetweenTicks);
 			data.SetInt("color", (int)Color.Rgba);
+			// Persist the user-supplied description across blueprints/clones.  The
+			// auto-appended module list is recomputed on display from live state, so
+			// we only write the user's prefix here.
+			if (CustomDescription.HasValue) {
+				data.SetString("controller_description", CustomDescription.Value);
+			}
 		}
 
 		public void ApplyConfig(EntityConfigData data)
@@ -121,7 +188,7 @@ namespace ProgramableNetwork
 				// TODO play sound
 				return;
 			}
-			
+
 			var newModules = data.GetArray("controller_modules", Module.Deserialize);
 			if (newModules != null)
 			{
@@ -139,22 +206,52 @@ namespace ProgramableNetwork
 					}
 				}
 			}
-			var newLocation = data.GetArray("controller_rows", Lyst<ModulePlacement>.Deserialize);
-			if (newLocation != null)
+			// Legacy clones may still have "controller_rows"; back-fill module positions if so.
+			ImmutableArray<Lyst<ModulePlacement>>? newLocation =
+				data.GetArray("controller_rows", Lyst<ModulePlacement>.Deserialize);
+			if (newLocation.HasValue)
 			{
-				this.Rows.Clear();
-				this.Rows.AddRange(newLocation?.AsEnumerable());
+				MigrateLegacyRowsIntoModules(newLocation.Value.AsEnumerable());
 			}
 			var newSpeed = data.GetInt("controller_speed");
 			if (newSpeed != null)
 			{
-				this.Speed = newSpeed.Value;
+				this.DelayBetweenTicks = newSpeed.Value;
+			}
+
+			Option<string> savedDescription = data.GetString("controller_description");
+			if (savedDescription.HasValue)
+			{
+				CustomDescription = savedDescription;
 			}
 
 			int? color = data.GetInt("color");
 			if (color != null)
 			{
 				this.Color = (uint)color.Value;
+			}
+		}
+
+		private void MigrateLegacyRowsIntoModules(IEnumerable<Lyst<ModulePlacement>> legacyRows)
+		{
+			var moduleById = new Dictionary<long, Module>();
+			foreach (var m in Modules)
+			{
+				moduleById[m.Id] = m;
+			}
+			int rowIdx = 0;
+			foreach (var row in legacyRows)
+			{
+				for (int col = 0; col < row.Count; col++)
+				{
+					var p = row[col];
+					if (p.Placement && p.ModuleId != 0 && moduleById.TryGetValue(p.ModuleId, out var m))
+					{
+						m.Row = rowIdx;
+						m.Column = col;
+					}
+				}
+				rowIdx++;
 			}
 		}
 
@@ -196,41 +293,83 @@ namespace ProgramableNetwork
 			}
 			else
 			{
+				// Resolve prototypes for every module.  Phantom modules (proto removed and
+				// no Deprecation replacement) are KEPT as visible tombstones — the player
+				// sees a "!!" cell with an "Original prototype no longer exists" tooltip
+				// and can decide whether to delete it manually.  We just skip field
+				// validation for them since Phantom carries no fields.
 				foreach (var m in Modules)
 				{
 					m.Controller = this;
 					m.Context = Context;
 					m.initContexts(saveVersion);
+
+					if (m.Prototype == null) {
+						Log.Warning($"Module {m.Id} with null prototype found in controller {Id}");
+						continue;
+					}
+					if (m.Prototype == ModuleProto.Phantom) {
+						Log.Warning($"Module {m.Id} resolved to Phantom in controller {Id}; original prototype no longer exists");
+						continue;
+					}
+
 					foreach (IField field in m.Prototype.Fields)
 					{
 						field.Validate(m);
 					}
+				}
 
+				// Drop input connections whose endpoints can't be resolved anymore.  Without
+				// this, cable rendering tries to look up pin protos on Phantom (no Inputs/
+				// Outputs) or hits stale references when a mod author renamed/removed a pin
+				// in a new version.  All four conditions are treated as "dead":
+				//   - source module no longer exists,
+				//   - source module exists but its prototype has no such output id,
+				//   - this module's prototype has no such input id,
+				//   - either side is a Phantom (no pins by definition).
+				var moduleById = new Dictionary<long, Module>();
+				foreach (var m in Modules) { moduleById[m.Id] = m; }
+				foreach (var m in Modules)
+				{
 					if (m.Prototype == null) {
-						Log.Warning($"Module {m.Id} with null prototype found in controller {Id}, skipping it");
+						continue;
+					}
+					foreach (var kv in m.InputModules.ToList())
+					{
+						if (!moduleById.TryGetValue(kv.Value.ModuleId, out var src))
+						{
+							m.InputModules.Remove(kv.Key);
+							continue;
+						}
+						if (src.Prototype == null || src.Prototype == ModuleProto.Phantom)
+						{
+							m.InputModules.Remove(kv.Key);
+							continue;
+						}
+						if (m.Prototype == ModuleProto.Phantom)
+						{
+							m.InputModules.Remove(kv.Key);
+							continue;
+						}
+						if (!src.Prototype.Outputs.Any(o => o.Id == kv.Value.OutputId))
+						{
+							Log.Warning($"Module {m.Id}: dropping connection for input '{kv.Key}' — source module {src.Id} no longer has output '{kv.Value.OutputId}'");
+							m.InputModules.Remove(kv.Key);
+							continue;
+						}
+						if (!m.Prototype.Inputs.Any(i => i.Id == kv.Key))
+						{
+							Log.Warning($"Module {m.Id}: dropping connection — input '{kv.Key}' no longer exists on this module's prototype");
+							m.InputModules.Remove(kv.Key);
+						}
 					}
 				}
 			}
 
-			for (int i = 0; i < Prototype.Rows; i++)
+			if (m_legacyRows != null)
 			{
-				if (i == Rows.Count)
-				{
-					var row = new Lyst<ModulePlacement>();
-					for (int j = 0; j < Prototype.Columns; j++)
-					{
-						row.Add((ModulePlacement)(0, true));
-					}
-					Rows.Add(row);
-				}
-				else
-				{
-					var row = Rows[i];
-					for (int j = row.Count; j < Prototype.Columns; j++)
-					{
-						row.Add((ModulePlacement)(0, true));
-					}
-				}
+				MigrateLegacyRowsIntoModules(m_legacyRows);
+				m_legacyRows = null;
 			}
 
 			if (Color == ColorRgba.Empty)
@@ -260,7 +399,7 @@ namespace ProgramableNetwork
 		{
 			base.SerializeData(writer);
 			writer.WriteString(m_protoId.Value);
-			writer.WriteInt(/*Version*/ 3);
+			writer.WriteInt(/*Version*/ CONTROLLER_DESCRIPTION);
 
 			writer.WriteString(ErrorMessage ?? "");
 			Option<string>.Serialize(CustomTitle, writer);
@@ -279,7 +418,11 @@ namespace ProgramableNetwork
 			writer.WriteInt(m_clock);
 
 			Lyst<Module>.Serialize(Modules, writer);
-			Lyst<Lyst<ModulePlacement>>.Serialize(Rows, writer);
+			// Layout grid (Rows) was dropped at MODULE_LAYOUT_INFO; positions live on each Module now.
+
+			// CONTROLLER_DESCRIPTION (v5+): player-writable description.  Empty Option
+			// is the safe default for old saves loaded back through the v<5 branch.
+			Option<string>.Serialize(CustomDescription, writer);
 		}
 
 		protected override void DeserializeData(BlobReader reader)
@@ -337,9 +480,22 @@ namespace ProgramableNetwork
 
 			Modules = Lyst<Module>.Deserialize(reader);
 			InvalidateModuleLookup();
-			Rows = Lyst<Lyst<ModulePlacement>>.Deserialize(reader);
+			if (version < MODULE_LAYOUT_INFO)
+			{
+				// Legacy save: positions live in the controller's grid. Stash and back-fill
+				// into modules in initContexts (after prototypes are resolved).
+				m_legacyRows = Lyst<Lyst<ModulePlacement>>.Deserialize(reader);
+			}
 
-			Log.Info($"Deserialized with {Modules.Count} modules and {Rows.Count} rows");
+			// CONTROLLER_DESCRIPTION (v5+): player-writable description string.
+			// Pre-v5 saves had no field — leave CustomDescription = None.
+			if (version >= CONTROLLER_DESCRIPTION)
+			{
+				CustomDescription = Option<string>.Deserialize(reader);
+			}
+
+			Log.Info($"Deserialized with {Modules.Count} modules" +
+				(m_legacyRows != null ? $" + {m_legacyRows.Count} legacy rows (will migrate)" : ""));
 			reader.RegisterInitAfterLoad(this, nameof(initContexts), InitPriority.Normal);
 		}
 
@@ -390,10 +546,7 @@ namespace ProgramableNetwork
 		[DoNotSave(0, null)]
 		private bool m_reninitNotification;
 
-		[DoNotSave(0, null)]
 		private int m_clockSpeed;
-
-		[DoNotSave(0, null)]
 		private int m_clock;
 
 		[DoNotSave(0, null)]
@@ -511,11 +664,11 @@ namespace ProgramableNetwork
 					total += m.Prototype.UsedPower.Value;
 			}
 
-			if (Speed == 0) {
+			if (DelayBetweenTicks == 0) {
 				return total.Kw();
 			}
 
-			return (total * 1 / (1 + Speed)).Max(1).Kw();
+			return (total * 1 / (1 + DelayBetweenTicks)).Max(1).Kw();
 		}
 
 		private Computing GetRequiredComputation()
@@ -526,13 +679,18 @@ namespace ProgramableNetwork
 				if (module.IsPaused) {
 					continue;
 				}
-				sum += module.Prototype.UsedComputing;
+				// DynamicComputing wins over the static UsedComputing when set
+				// (PLC modules: cost = 1 + 0.05 × parsed-node-count).  Falling
+				// back to UsedComputing keeps every other module unchanged.
+				sum += module.Prototype.DynamicComputing != null
+					? module.Prototype.DynamicComputing(module)
+					: module.Prototype.UsedComputing;
 			}
 
 			if (sum == PartialQuantity.Zero) {
 				return Computing.Zero;
 			}
-			sum = (sum * 1 / (1 + Speed)).Max(PartialQuantity.One);
+			sum = (sum * 1 / (1 + DelayBetweenTicks)).Max(PartialQuantity.One);
 			return Computing.FromQuantity(sum.IntegerPart.Max(Quantity.One));
 		}
 
@@ -591,7 +749,15 @@ namespace ProgramableNetwork
 						module.SetStatus(ModuleStatus.Skipped);
 						continue;
 					}
-					if (module.Prototype.UsedComputing > PartialQuantity.Zero && !computingConsumed)
+					// Match the GetRequiredComputation path: a module needs computing
+					// if its dynamic-cost callback returns >0 OR (when no callback)
+					// its static UsedComputing is >0.  Without this, PLC modules
+					// (whose cost is always dynamic) would never skip on missing
+					// computing because their UsedComputing stays at zero.
+					PartialQuantity moduleCost = module.Prototype.DynamicComputing != null
+						? module.Prototype.DynamicComputing(module)
+						: module.Prototype.UsedComputing;
+					if (moduleCost > PartialQuantity.Zero && !computingConsumed)
 					{
 						missingComputation = missingComputation || true;
 						module.SetStatus(ModuleStatus.Skipped);
@@ -688,8 +854,55 @@ namespace ProgramableNetwork
 			return m_moduleLookupCache;
 		}
 
+		// Holds the layout table read from a pre-MODULE_LAYOUT_INFO save until
+		// initContexts can back-fill module positions; cleared right after.
+		[DoNotSave(0, null)]
+		private Lyst<Lyst<ModulePlacement>> m_legacyRows;
+
+		// Computed grid view over Modules' (Row, Column). Recomputed on every read; do not
+		// mutate the returned Lyst — it is a snapshot. Kept for line-painting / read-only consumers.
 		[DoNotSave()]
-		public Lyst<Lyst<ModulePlacement>> Rows { get; private set; }
+		public Lyst<Lyst<ModulePlacement>> Rows
+		{
+			get
+			{
+				int rows = Prototype != null ? Prototype.Rows : 0;
+				int cols = Prototype != null ? Prototype.Columns : 0;
+				var grid = new Lyst<Lyst<ModulePlacement>>();
+				for (int i = 0; i < rows; i++)
+				{
+					var row = new Lyst<ModulePlacement>();
+					for (int j = 0; j < cols; j++)
+					{
+						row.Add(ModulePlacement.Empty);
+					}
+					grid.Add(row);
+				}
+				if (Modules == null) {
+					return grid;
+				}
+				foreach (var m in Modules)
+				{
+					if (m == null || m.Prototype == null) {
+						continue;
+					}
+					int width = m.Layout.GetWidth(m);
+					if (m.Row < 0 || m.Row >= grid.Count) {
+						continue;
+					}
+					var row = grid[m.Row];
+					for (int x = 0; x < width; x++)
+					{
+						int c = m.Column + x;
+						if (c < 0 || c >= row.Count) {
+							continue;
+						}
+						row[c] = x == 0 ? ModulePlacement.Origin(m.Id) : ModulePlacement.Rest(m.Id);
+					}
+				}
+				return grid;
+			}
+		}
 
 		[DoNotSave()]
 		public int GeneralPriority { get; set; }
@@ -701,7 +914,7 @@ namespace ProgramableNetwork
 		public bool IsCargoAffectedByGeneralPriority => false;
 
 		[DoNotSave()]
-		public int Speed { get => m_clockSpeed; set => m_clockSpeed = value; }
+		public int DelayBetweenTicks { get => m_clockSpeed; set => m_clockSpeed = value; }
 
 		[DoNotSave()]
 		public int Clock { get => m_clock; set => m_clock = value; }

@@ -19,9 +19,9 @@ namespace ProgramableNetwork.Python
         //lang=regex
         private const string data = @"(?<str>""[^""]*""|'[^']*')|(?<number>\d+(?:\.\d+)?)|(?<name>[a-zA-Z_]\w*)";
         //lang=regex
-        private const string keywordsList = @"^(?:(?<none>None)|(?<btrue>True)|(?<bfalse>False)|(?<and>and)|(?<or>or)|(?<ink>in)|(?<from>from)|(?<import>import)|(?<def>def)|(?<classp>class)|(?<ifp>if)|(?<elif>elif)|(?<elsep>else)|(?<returnp>return)|(?<pass>pass))$";
+        private const string keywordsList = @"^(?:(?<none>None)|(?<btrue>True)|(?<bfalse>False)|(?<and>and)|(?<or>or)|(?<ink>in)|(?<from>from)|(?<import>import)|(?<def>def)|(?<classp>class)|(?<ifp>if)|(?<elif>elif)|(?<elsep>else)|(?<returnp>return)|(?<pass>pass)|(?<forp>for)|(?<whilep>while)|(?<breakp>break)|(?<continuep>continue))$";
         //lang=regex
-        private const string indentation = @"(?<block>:)|(?<space>[\t ]+)|(?<comment>#[^\n]+)|(?<rest>.)";
+        private const string indentation = @"(?<block>:)|(?<space>[\t ]+)|(?<comment>#[^\n]*)|(?<rest>.)";
 
         private static readonly Regex combined = new Regex(
             string.Join("|", fstr, paren, comp, oper, data, indentation)
@@ -34,6 +34,19 @@ namespace ProgramableNetwork.Python
         {
             string[] lines = File.ReadAllLines(file);
             FileInfo fileInfo = new FileInfo(file);
+            return ParseLines(fileInfo, lines);
+        }
+
+        // In-memory entry point — used by the PLC module to lex player-authored
+        // scripts that don't live on disk.  `source` is split on \n; \r is
+        // tolerated by trim during lexing.  `displayName` shows up in error
+        // messages (Token.file.Name); pass something meaningful like the module
+        // id so parser exceptions point back to the right script.  Avoid path-
+        // illegal chars (FileInfo construction will throw on `<`, `>`, etc).
+        public static Token[] ParseString(string source, string displayName = "inline.py")
+        {
+            string[] lines = (source ?? string.Empty).Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+            FileInfo fileInfo = new FileInfo(displayName);
             return ParseLines(fileInfo, lines);
         }
 
@@ -74,15 +87,27 @@ namespace ProgramableNetwork.Python
 						if (token.Name == "rest") {
 							continue;
 						}
-						if (token.Name == "space")
+						if (token.Name == "space" && token.Success)
                         { // skip whitespaces
                             found = true;
                             end = token.Index + token.Length;
                             break;
                         }
-                        if (token.Name == "comment")
-                        { // skip whitespaces
+                        if (token.Name == "comment" && token.Success)
+                        {
                             found = true;
+                            // Emit the comment as a real token so the syntax
+                            // highlighter can color it.  The lexer ignores
+                            // PythonTokens.comment via its defaultIgnore list,
+                            // so the AST is unaffected.  Line/column use the
+                            // 1-based convention shared by the other token
+                            // emissions in this loop (PlcPySyntax converts
+                            // back to 0-based when slicing the source).
+                            tokens.Add(new Token(fileInfo, lines[i], i + 1, token.Index + 1, token.Length, PythonTokens.comment, token.Value));
+                            // Comments run to end-of-line — emit the newline
+                            // immediately after so block/indent dispatch works
+                            // the same way it did when comments were folded
+                            // straight into a newline.
                             tokens.Add(new Token(fileInfo, lines[i], i, end, 1, PythonTokens.newline, "\n"));
                             end = token.Index + token.Length;
                             break;
