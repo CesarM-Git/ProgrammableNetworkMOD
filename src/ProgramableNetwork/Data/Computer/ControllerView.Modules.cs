@@ -1210,33 +1210,7 @@ namespace ProgramableNetwork.Ui
 			var module = new Module(moduleProto, Entity.Context, Entity);
 			var width = module.Layout.GetWidth(module);
 
-<<<<<<< HEAD
-			var end = targetColumn + width;
-			for (int columnEnd = targetColumn; columnEnd < end; columnEnd++)
-			{
-				if (row[columnEnd].ModuleId != 0)
-				{
-					placeFound = false;
-					break;
-				}
-			}
-
-			if (placeFound)
-			{
-				for (int i = targetColumn; i < end; i++)
-				{
-					row[i] = (module.Id, false);
-				}
-				row[targetColumn] = (module.Id, true);
-				Entity.Modules.Add(module);
-				Entity.InvalidateModuleLookup();
-				m_lastCreated = module;
-				return true;
-			}
-			else
-=======
 			if (!IsRangeFree(targetRow, targetColumn, width, ignore: null))
->>>>>>> upstream/main-programable-network-0.8
 			{
 				m_controller.Context.AudioDb.InvalidOp(true).Play();
 				return false;
@@ -1245,6 +1219,7 @@ namespace ProgramableNetwork.Ui
 			module.Row = targetRow;
 			module.Column = targetColumn;
 			Entity.Modules.Add(module);
+			Entity.InvalidateModuleLookup();
 			m_lastCreated = module;
 			return true;
 		}
