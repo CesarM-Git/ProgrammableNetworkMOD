@@ -60,20 +60,12 @@ namespace ProgramableNetwork
         }
 
         /// <summary>
-        /// Id rename plus optional extension counts — useful when the removed module was
-        /// the wider sibling of an extensible one and we need to grow the migrated
-        /// module's pin / display extent to match what the player saved.
-        /// </summary>
-        public static void RegisterDeprecation(ModuleProto.ID deprecated, ModuleProto.ID replacement,
-            int? inputExt = null, int? outputExt = null, int? displayExt = null)
-        {
-            Deprecations[deprecated] = new Migration(replacement, inputExt, outputExt, displayExt);
-        }
-
-        /// <summary>
-        /// Id rename with optional extension counts AND pin-id remaps.  Use when the
-        /// replacement prototype renamed one or more input/output pins relative to the
-        /// deprecated module — e.g. Sum_4's output "sum" became "c" in the extensible Sum.
+        /// Id rename with optional extension counts AND optional pin-id remaps.
+        /// Use extension counts when the removed module was the wider sibling of an
+        /// extensible one and we need to grow the migrated module's pin / display
+        /// extent to match what the player saved.  Use remaps when the replacement
+        /// prototype renamed one or more input/output pins relative to the deprecated
+        /// module — e.g. Sum_4's output "sum" became "c" in the extensible Sum.
         /// </summary>
         public static void RegisterDeprecation(ModuleProto.ID deprecated, ModuleProto.ID replacement,
             int? inputExt = null, int? outputExt = null, int? displayExt = null,
