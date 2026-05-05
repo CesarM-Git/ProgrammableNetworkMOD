@@ -97,19 +97,21 @@ class Runtime_FlipFlop(Module):
     def action(self):
         if not self.Input.get_bool("enable", False):
             return
-        # Latch every effective data pin pair (slot 0 is "enable", channels 1..N).
-        n = self.effective_input_count
-        if n <= 1:
+        # Latch every effective data pin pair.  Input index starts at 1 because
+        # slot 0 is "enable"; output index starts at 0 because outputs have no
+        # enable pin.  So input[1]=in_1 pairs with output[0]=out_1, etc.
+        n = self.effective_output_count
+        if n < 1:
             return
-        self._latch(1, n)
+        self._latch(0, n)
 
-    def _latch(self, idx, n):
-        if idx >= n:
+    def _latch(self, out_idx, n):
+        if out_idx >= n:
             return
-        in_name = self.effective_input_id(idx)
-        out_name = self.effective_output_id(idx)
+        in_name = self.effective_input_id(out_idx + 1)
+        out_name = self.effective_output_id(out_idx)
         self.Output.set(out_name, self.Input.get(in_name, Fix32.Zero))
-        self._latch(idx + 1, n)
+        self._latch(out_idx + 1, n)
 
     def Display(self):
         self._show_write()

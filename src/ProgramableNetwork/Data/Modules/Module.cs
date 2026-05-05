@@ -51,6 +51,16 @@ namespace ProgramableNetwork
 		[DoNotSave]
 		private ImmutableArray<ResearchNode> m_researchNodes;
 
+		/// <summary>
+		/// Transient remap table set during deprecation migration in <see cref="initContexts"/>.
+		/// Maps old output pin ids to their new ids on the replacement prototype.  Used by
+		/// <see cref="Controller.initContexts"/> to fix up other modules' InputModules entries
+		/// that reference this module's old output ids before cable pruning runs.
+		/// Null when no migration occurred or when no output ids changed.
+		/// </summary>
+		[DoNotSave]
+		internal IReadOnlyDictionary<string, string> MigrationOutputIdRemap;
+
 		public Module(ModuleProto prototype, EntityContext context, Controller entity)
 		{
 			this.Id = Controller.NextModuleId();
@@ -565,6 +575,19 @@ namespace ProgramableNetwork
 					if (migration.Value.DisplayExtensionCount.HasValue) {
 						DisplayExtensionCount = migration.Value.DisplayExtensionCount.Value;
 					}
+					// Pin-id remap: when the replacement prototype renamed input pins,
+					// rewrite this module's InputModules keys so the connections survive
+					// cable pruning.  Output-id remap is stored for Controller to apply
+					// on OTHER modules' InputModules that reference this module's outputs.
+					if (migration.Value.InputIdRemap != null) {
+						foreach (var kv in migration.Value.InputIdRemap) {
+							if (InputModules.TryGetValue(kv.Key, out var connector)) {
+								InputModules.Remove(kv.Key);
+								InputModules[kv.Value] = connector;
+							}
+						}
+					}
+					MigrationOutputIdRemap = migration.Value.OutputIdRemap;
 				} else {
 					// No proto and no Deprecation replacement — leave a visible tombstone with
 					// a clear error string so the hover tooltip explains *which* prototype is

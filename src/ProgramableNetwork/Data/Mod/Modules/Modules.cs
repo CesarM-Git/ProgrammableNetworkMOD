@@ -62,12 +62,19 @@ public class Modules : ModuleGroup, IModuleGroup {
 		// extensible prototype and records the InputExtensionCount that reproduces
 		// the original pin count (e.g. Sum_4 → Sum + 2 ext = 4 inputs).  Module-load
 		// path consults this table when a save references an unregistered proto.
+		//
+		// Sum_4/Sum_8 also need an output-id remap: the old modules used output "sum"
+		// but the extensible Sum uses output "c" (a+b=c naming).  Without the remap,
+		// any module wired to the old "sum" output loses its connection on load.
+		var sumOutputRemap = new Dictionary<string, string> { { "sum", "c" } };
 		Deprecation.RegisterDeprecation(
 			new ModuleProto.ID("Sum_4".ModuleId()),
-			new ModuleProto.ID("Sum".ModuleId()), inputExt: 2);
+			new ModuleProto.ID("Sum".ModuleId()), inputExt: 2,
+			outputIdRemap: sumOutputRemap);
 		Deprecation.RegisterDeprecation(
 			new ModuleProto.ID("Sum_8".ModuleId()),
-			new ModuleProto.ID("Sum".ModuleId()), inputExt: 6);
+			new ModuleProto.ID("Sum".ModuleId()), inputExt: 6,
+			outputIdRemap: sumOutputRemap);
 		Deprecation.RegisterDeprecation(
 			new ModuleProto.ID("Boolean_And_4".ModuleId()),
 			new ModuleProto.ID("Boolean_And_2".ModuleId()), inputExt: 2);

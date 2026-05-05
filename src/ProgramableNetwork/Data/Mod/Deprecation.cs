@@ -19,6 +19,11 @@ namespace ProgramableNetwork
     /// <c>OutputExtensionCount</c> to the recorded values (clamped to the new prototype's
     /// max extensions).  Anything that doesn't have an entry here falls through to the
     /// Phantom path.
+    ///
+    /// When pin ids changed between the old and new prototype (e.g. Sum_4's output "sum"
+    /// became "c" in the extensible Sum), supply an <c>OutputIdRemap</c> / <c>InputIdRemap</c>
+    /// dictionary mapping old→new ids.  The Controller's cable-pruning pass applies these
+    /// remaps before checking HasInput/HasOutput so connections survive the rename.
     /// </summary>
     public class Deprecation
     {
@@ -28,13 +33,20 @@ namespace ProgramableNetwork
             public readonly int? InputExtensionCount;
             public readonly int? OutputExtensionCount;
             public readonly int? DisplayExtensionCount;
+            /// <summary>Maps old input pin ids to new ids on the replacement prototype.  Null when no rename occurred.</summary>
+            public readonly IReadOnlyDictionary<string, string> InputIdRemap;
+            /// <summary>Maps old output pin ids to new ids on the replacement prototype.  Null when no rename occurred.</summary>
+            public readonly IReadOnlyDictionary<string, string> OutputIdRemap;
 
-            public Migration(ModuleProto.ID replacement, int? inputExt = null, int? outputExt = null, int? displayExt = null)
+            public Migration(ModuleProto.ID replacement, int? inputExt = null, int? outputExt = null, int? displayExt = null,
+                IReadOnlyDictionary<string, string> inputIdRemap = null, IReadOnlyDictionary<string, string> outputIdRemap = null)
             {
                 Replacement = replacement;
                 InputExtensionCount = inputExt;
                 OutputExtensionCount = outputExt;
                 DisplayExtensionCount = displayExt;
+                InputIdRemap = inputIdRemap;
+                OutputIdRemap = outputIdRemap;
             }
         }
 
@@ -56,6 +68,18 @@ namespace ProgramableNetwork
             int? inputExt = null, int? outputExt = null, int? displayExt = null)
         {
             Deprecations[deprecated] = new Migration(replacement, inputExt, outputExt, displayExt);
+        }
+
+        /// <summary>
+        /// Id rename with optional extension counts AND pin-id remaps.  Use when the
+        /// replacement prototype renamed one or more input/output pins relative to the
+        /// deprecated module — e.g. Sum_4's output "sum" became "c" in the extensible Sum.
+        /// </summary>
+        public static void RegisterDeprecation(ModuleProto.ID deprecated, ModuleProto.ID replacement,
+            int? inputExt = null, int? outputExt = null, int? displayExt = null,
+            IReadOnlyDictionary<string, string> inputIdRemap = null, IReadOnlyDictionary<string, string> outputIdRemap = null)
+        {
+            Deprecations[deprecated] = new Migration(replacement, inputExt, outputExt, displayExt, inputIdRemap, outputIdRemap);
         }
 
         public static ModuleProto.ID? GetAlternative(ModuleProto.ID original)

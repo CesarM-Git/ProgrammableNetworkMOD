@@ -410,6 +410,32 @@ namespace ProgramableNetwork
 					InvalidateModuleLookup();
 				}
 
+				// Pin-id remap pass: when a deprecated module's replacement prototype
+				// renamed output pins, rewrite any InputModules entries on OTHER modules
+				// that still reference the old output id.  This must run BEFORE the
+				// pruning pass below, otherwise the stale id triggers HasOutput → false
+				// and the connection is dropped.  Input-id remaps are already handled
+				// inside Module.initContexts (the module remaps its own InputModules keys).
+				var moduleById = new Dictionary<long, Module>();
+				foreach (var m in Modules) { moduleById[m.Id] = m; }
+				foreach (var m in Modules)
+				{
+					if (m.Prototype == null) {
+						continue;
+					}
+					foreach (var kv in m.InputModules.ToList())
+					{
+						if (!moduleById.TryGetValue(kv.Value.ModuleId, out var src)) {
+							continue; // pruning pass will handle this
+						}
+						if (src.MigrationOutputIdRemap != null &&
+							src.MigrationOutputIdRemap.TryGetValue(kv.Value.OutputId, out string newOutputId))
+						{
+							m.InputModules[kv.Key] = new ModuleConnector(kv.Value.ModuleId, newOutputId);
+						}
+					}
+				}
+
 				// Drop input connections whose endpoints can't be resolved anymore.  Without
 				// this, cable rendering tries to look up pin protos on Phantom (no Inputs/
 				// Outputs) or hits stale references when a mod author renamed/removed a pin
@@ -418,8 +444,6 @@ namespace ProgramableNetwork
 				//   - source module exists but its prototype has no such output id,
 				//   - this module's prototype has no such input id,
 				//   - either side is a Phantom (no pins by definition).
-				var moduleById = new Dictionary<long, Module>();
-				foreach (var m in Modules) { moduleById[m.Id] = m; }
 				foreach (var m in Modules)
 				{
 					if (m.Prototype == null) {
