@@ -102,6 +102,14 @@ namespace ProgramableNetwork.Ui
 				m_controller.OutputConnection = null;
 				m_controller.EntityHighlighterSelectable.ClearAllHighlights();
 				m_updaters.Clear();
+				// The inspector is a singleton — when the player clicks a different
+				// controller, Entity changes but our cache still holds ModuleViews
+				// bound to the PREVIOUS controller's Module instances.  Copy-pasted
+				// controllers share Module.Id values, so the keyed lookup would
+				// silently return stale views that mutate the wrong controller.
+				// Flush the entire cache on every entity switch.
+				m_moduleViewCache.Clear();
+				m_colorCombinations.Clear();
 
 				if (entity != null)
 				{
@@ -1104,21 +1112,28 @@ namespace ProgramableNetwork.Ui
 			if (m_lastCreated == null) {
 				return false;
 			}
-			if (!TryPlaceAt(m_lastCreated.Prototype, row, col)) {
+			// Save a snapshot of the source module's data BEFORE TryPlaceAt, because
+			// TryPlaceAt creates a new Module and overwrites m_lastCreated with it.
+			// Without this, the copy loops below were iterating over the NEW (empty)
+			// module's data and writing each entry back to itself — a no-op.
+			Module source = m_lastCreated;
+			if (!TryPlaceAt(source.Prototype, row, col)) {
 				return false;
 			}
+			// m_lastCreated now points to the newly placed module.
+			Module target = m_lastCreated;
 
-			m_lastCreated.Prototype.ExecuteInit(m_lastCreated, log: false);
-			foreach (KeyValuePair<string, int> item in m_lastCreated.NumberData) {
-				m_lastCreated.NumberData[item.Key] = item.Value;
+			target.Prototype.ExecuteInit(target, log: false);
+			foreach (KeyValuePair<string, int> item in source.NumberData) {
+				target.NumberData[item.Key] = item.Value;
 			}
-			foreach (KeyValuePair<string, Fix32> item in m_lastCreated.FieldNumberData) {
-				m_lastCreated.FieldNumberData[item.Key] = item.Value;
+			foreach (KeyValuePair<string, Fix32> item in source.FieldNumberData) {
+				target.FieldNumberData[item.Key] = item.Value;
 			}
-			foreach (KeyValuePair<string, string> item in m_lastCreated.StringData) {
-				m_lastCreated.StringData[item.Key] = item.Value;
+			foreach (KeyValuePair<string, string> item in source.StringData) {
+				target.StringData[item.Key] = item.Value;
 			}
-			m_lastCreated.Prototype.DisplayUpdate(m_lastCreated);
+			target.Prototype.DisplayUpdate(target);
 			return true;
 		}
 

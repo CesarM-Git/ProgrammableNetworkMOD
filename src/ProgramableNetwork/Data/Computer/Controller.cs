@@ -72,6 +72,14 @@ namespace ProgramableNetwork
 		// can grow the display from the inspector after load.
 		public const int MODULE_DISPLAY_EXTENSIONS = 8;
 
+		// Controller serialization version where Module.Id values are regenerated
+		// on load to guarantee global uniqueness.  Older saves may have duplicate
+		// IDs across controllers (from blueprint copy-paste).  The one-time
+		// migration in initContexts re-rolls every module's ID and remaps all
+		// InputModules connections.  Once saved at this version, subsequent loads
+		// skip the migration.
+		private const int CONTROLLER_UNIQUE_MODULE_IDS = 6;
+
 		private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction = delegate(object obj, BlobWriter writer)
 		{
 			((Controller) obj).SerializeData(writer);
@@ -157,6 +165,8 @@ namespace ProgramableNetwork
 		private ControllerProto m_proto;
 		[DoNotSave(0, null)]
 		private Mafi.Core.Entities.Static.StaticEntityProto.ID m_protoId;
+		[DoNotSave(0, null)]
+		private int m_controllerLoadedVersion;
 
 		[DoNotSave(0, null)]
 		public new ControllerProto Prototype
@@ -210,6 +220,41 @@ namespace ProgramableNetwork
 			{
 				this.Modules.Clear();
 				this.Modules.AddRange(newModules?.AsEnumerable());
+
+				// Regenerate globally unique IDs for each pasted module.  Blueprints
+				// and copy-paste deserialize the original IDs verbatim, which means
+				// multiple controllers end up sharing the same Module.Id values.
+				// That violates the uniqueness contract and causes bugs whenever any
+				// cache or lookup uses Module.Id without per-controller scoping.
+				var idRemap = new System.Collections.Generic.Dictionary<long, long>(this.Modules.Count);
+				foreach (Module module in this.Modules)
+				{
+					long oldId = module.Id;
+					long newId = System.Threading.Interlocked.Increment(ref s_nextModuleId);
+					module.Id = newId;
+					idRemap[oldId] = newId;
+				}
+				// Remap all InputModules references so internal wiring follows the
+				// new IDs.  ModuleConnector.ModuleId is readonly, so we replace the
+				// entire connector instance.
+				foreach (Module module in this.Modules)
+				{
+					foreach (string inputKey in new System.Collections.Generic.List<string>(module.InputModules.Keys))
+					{
+						ModuleConnector old = module.InputModules[inputKey];
+						if (idRemap.TryGetValue(old.ModuleId, out long remappedId))
+						{
+							module.InputModules[inputKey] = new ModuleConnector(remappedId, old.OutputId);
+						}
+						// If the source ID isn't in the remap (points outside this
+						// controller), drop the connection — it would dangle anyway.
+						else
+						{
+							module.InputModules.Remove(inputKey);
+						}
+					}
+				}
+
 				InvalidateModuleLookup();
 				foreach (Module module in this.Modules)
 				{
@@ -335,6 +380,36 @@ namespace ProgramableNetwork
 					}
 				}
 
+				// One-time migration: saves written before CONTROLLER_UNIQUE_MODULE_IDS
+				// may have duplicate Module.Id values across controllers (from blueprint
+				// copy-paste).  Regenerate every ID and remap InputModules connections.
+				// Once saved at the new version, this block is skipped on future loads.
+				if (m_controllerLoadedVersion < CONTROLLER_UNIQUE_MODULE_IDS)
+				{
+					Log.Info($"Controller {Id}: migrating module IDs (save version {m_controllerLoadedVersion} < {CONTROLLER_UNIQUE_MODULE_IDS})");
+					var idRemap = new Dictionary<long, long>(Modules.Count);
+					for (int i = 0; i < Modules.Count; i++)
+					{
+						long oldId = Modules[i].Id;
+						long newId = System.Threading.Interlocked.Increment(ref s_nextModuleId);
+						Modules[i].Id = newId;
+						idRemap[oldId] = newId;
+					}
+					foreach (var m in Modules)
+					{
+						foreach (string inputKey in new System.Collections.Generic.List<string>(m.InputModules.Keys))
+						{
+							ModuleConnector old = m.InputModules[inputKey];
+							if (idRemap.TryGetValue(old.ModuleId, out long remappedId))
+							{
+								m.InputModules[inputKey] = new ModuleConnector(remappedId, old.OutputId);
+							}
+							// else: dangling — cleaned up by the pruning pass below.
+						}
+					}
+					InvalidateModuleLookup();
+				}
+
 				// Drop input connections whose endpoints can't be resolved anymore.  Without
 				// this, cable rendering tries to look up pin protos on Phantom (no Inputs/
 				// Outputs) or hits stale references when a mod author renamed/removed a pin
@@ -415,7 +490,7 @@ namespace ProgramableNetwork
 		{
 			base.SerializeData(writer);
 			writer.WriteString(m_protoId.Value);
-			writer.WriteInt(/*Version*/ CONTROLLER_DESCRIPTION);
+			writer.WriteInt(/*Version*/ CONTROLLER_UNIQUE_MODULE_IDS);
 
 			writer.WriteString(ErrorMessage ?? "");
 			Option<string>.Serialize(CustomTitle, writer);
@@ -446,6 +521,7 @@ namespace ProgramableNetwork
 			base.DeserializeData(reader);
 			m_protoId = new Mafi.Core.Entities.Static.StaticEntityProto.ID(reader.ReadString());
 			int version = reader.ReadInt();
+			m_controllerLoadedVersion = version;
 
 			CurrentInstruction = 0;
 
@@ -834,6 +910,19 @@ namespace ProgramableNetwork
 
 		[DoNotSave()]
 		public Lyst<Module> Modules { get; private set; }
+
+		// Monotonic counter used by initContexts, ApplyConfig, and the Module
+		// constructor to generate globally unique Module.Id values without
+		// Thread.Sleep.  Seeded from DateTime.UtcNow.Ticks and incremented
+		// atomically per module, so even controllers loaded in the same tick
+		// get non-overlapping ranges.
+		private static long s_nextModuleId = System.DateTime.UtcNow.Ticks;
+
+		/// <summary>
+		/// Returns the next globally unique module ID.  Thread-safe.
+		/// </summary>
+		internal static long NextModuleId()
+			=> System.Threading.Interlocked.Increment(ref s_nextModuleId);
 
 		// FIX: Cached module-ID-to-Module lookup, rebuilt only when the module
 		// list actually changes (add/remove/clear). Previously, UpdateModules()

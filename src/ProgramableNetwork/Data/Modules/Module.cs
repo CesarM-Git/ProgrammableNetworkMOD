@@ -7,7 +7,6 @@ using Mafi.Serialization;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using Mafi.Collections.ImmutableCollections;
 using Mafi.Core.Research;
 using UnityEngine;
@@ -54,8 +53,7 @@ namespace ProgramableNetwork
 
 		public Module(ModuleProto prototype, EntityContext context, Controller entity)
 		{
-			this.Id = DateTime.UtcNow.Ticks;
-			Thread.Sleep(1);
+			this.Id = Controller.NextModuleId();
 			Prototype = prototype;
 			Context = context;
 			Controller = entity;
@@ -73,7 +71,7 @@ namespace ProgramableNetwork
 
 		public ModuleStatus Status { get; private set; }
 		public string Error { get; private set; } = "";
-		public long Id { get; private set; }
+		public long Id { get; internal set; }
 
 		// Position on the controller grid. Owned by the module since
 		// Controller.MODULE_LAYOUT_INFO; controllers no longer store a layout.
