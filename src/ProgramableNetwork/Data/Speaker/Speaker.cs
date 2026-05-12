@@ -262,8 +262,8 @@ namespace ProgramableNetwork.Data.Speaker
                     if (m_audioSource == null)
                     {
                         m_audioSource = GlobalDependencyResolver.Get<UiContext>().AudioDb
-                            .GetClonedAudio(Sound, Mafi.Unity.Audio.AudioChannel.Machines);
-                        m_audioSource.spatialBlend = 1f; // 3D sound
+                            .GetClonedAudio(Sound, Mafi.Unity.Audio.AudioChannel.UserInterface);
+                        m_audioSource.spatialBlend = 0f; // 2D sound — heard everywhere
                         m_audioSource.loop = false;
                     }
 
