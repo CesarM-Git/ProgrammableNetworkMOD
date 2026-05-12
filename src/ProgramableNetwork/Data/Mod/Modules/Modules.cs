@@ -1762,7 +1762,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.ModuleBuilderStart("Connection_Vehicle_Set", "Connection: Vehicle count (set)", "V-S")
 			.AddCategory(Category.Connection)
 			.AddCategory(Category.ConnectionRead)
-			.SetDescription("Sets count of vehicles assigned to the building, by default it takes vehicles from all zones. The <b>enable</b> toggle (or input) controls whether the module actively assigns/unassigns vehicles; when disabled the module idles without changing assignments.")
+			.SetDescription("Sets count of vehicles assigned to the building, by default it takes vehicles from all zones. The <b>enable</b> toggle (or input) controls whether the module actively assigns/unassigns vehicles; when disabled the module unassigns all vehicles from the building.")
 			.Width(4)
 			.AddInput("enable", "Enable assignment")
 			.AddInput("count", "Vehicle count")
@@ -1786,6 +1786,15 @@ public class Modules : ModuleGroup, IModuleGroup {
 				})
 			.Action(m => {
 				if (!m.FieldOrInput.Bool["enable"]) {
+					// When disabled, unassign all vehicles from the building
+					var building = m.Field.Entity<IEntityAssignedWithVehicles>("building");
+					if (building is not null && building.AllVehicles.Count > 0) {
+						// Snapshot to list — collection is modified during iteration
+						var toRemove = building.AllVehicles.ToList();
+						foreach (var veh in toRemove) {
+							building.UnassignVehicle(veh, cancelJobs: false);
+						}
+					}
 					m.Warning = false;
 					return ModuleStatus.Iddle;
 				}
