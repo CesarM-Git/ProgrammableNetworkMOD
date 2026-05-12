@@ -1789,8 +1789,10 @@ public class Modules : ModuleGroup, IModuleGroup {
 					// When disabled, unassign all vehicles from the building
 					var building = m.Field.Entity<IEntityAssignedWithVehicles>("building");
 					if (building is not null && building.AllVehicles.Count > 0) {
-						// Snapshot to list — collection is modified during iteration
-						var toRemove = building.AllVehicles.ToList();
+						// Snapshot to list — collection is modified during iteration.
+						// IIndexable<T> doesn't implement IEnumerable<T>; call AsEnumerable() so
+						// ToList resolves to Enumerable.ToList (not ParallelEnumerable.ToList).
+						var toRemove = building.AllVehicles.AsEnumerable().ToList();
 						foreach (var veh in toRemove) {
 							building.UnassignVehicle(veh, cancelJobs: false);
 						}
