@@ -485,39 +485,29 @@ namespace ProgramableNetwork
 					InvalidateModuleLookup();
 				}
 
-				// Pin-id remap pass: when a deprecated module's replacement prototype
-				// renamed output pins (Migration.OutputIdMap), rewrite any InputModules
-				// entries on OTHER modules that still reference the old output id.  This
-				// must run BEFORE the pruning pass below, otherwise the stale id triggers
-				// HasOutput → false and the connection is dropped.  Input-id remaps are
-				// already handled inside Module.initContexts (the module remaps its own
-				// InputModules keys).
+				// Build module-by-id lookup and cache each migrated source's OutputIdMap
+				// so the pruning loop below can apply pin renames inline (per consumer
+				// connection) without re-resolving the Deprecation entry every iteration.
+				// Input-id remaps are already handled inside Module.initContexts (each
+				// module remaps its own InputModules keys during deserialization).
 				var moduleById = new Dictionary<long, Module>();
 				foreach (var m in Modules) { moduleById[m.Id] = m; }
+
+				var outputRemapBySource = new Dictionary<long, IReadOnlyDictionary<string, string>>();
 				foreach (var m in Modules)
 				{
-					if (m.Prototype == null) {
-						continue;
-					}
-					foreach (var kv in m.InputModules.ToList())
+					var mig = Deprecation.GetMigration(new ModuleProto.ID(m.OriginalProtoId));
+					if (mig.HasValue && mig.Value.AppliesAt(m.LoadedVersion) && mig.Value.OutputIdMap != null)
 					{
-						if (!moduleById.TryGetValue(kv.Value.ModuleId, out var src)) {
-							continue; // pruning pass will handle this
-						}
-						var mig = Deprecation.GetMigration(new ModuleProto.ID(src.OriginalProtoId));
-						if (mig.HasValue && mig.Value.AppliesAt(src.LoadedVersion)
-							&& mig.Value.OutputIdMap != null
-							&& mig.Value.OutputIdMap.TryGetValue(kv.Value.OutputId, out string newOutputId))
-						{
-							m.InputModules[kv.Key] = new ModuleConnector(kv.Value.ModuleId, newOutputId);
-						}
+						outputRemapBySource[m.Id] = mig.Value.OutputIdMap;
 					}
 				}
 
-				// Drop input connections whose endpoints can't be resolved anymore.  Without
-				// this, cable rendering tries to look up pin protos on Phantom (no Inputs/
-				// Outputs) or hits stale references when a mod author renamed/removed a pin
-				// in a new version.  All four conditions are treated as "dead":
+				// Reattach connections whose endpoints renamed pins in a Deprecation entry,
+				// then drop the ones that are still unresolvable.  Without this, cable
+				// rendering tries to look up pin protos on Phantom (no Inputs/Outputs) or
+				// hits stale references when a mod author renamed/removed a pin in a new
+				// version.  Death conditions:
 				//   - source module no longer exists,
 				//   - source module exists but its prototype has no such output id (after remap),
 				//   - this module's prototype has no such input id,
