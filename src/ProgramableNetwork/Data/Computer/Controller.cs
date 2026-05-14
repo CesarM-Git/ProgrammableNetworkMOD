@@ -84,18 +84,30 @@ namespace ProgramableNetwork
 		// result anyway, so dropped scratch values are recoverable.
 		public const int MODULE_PLC_CONTEXT = 9;
 
-		// Controller serialization version where module ids switched from a
-		// time-based source (DateTime.UtcNow.Ticks + Thread.Sleep(1)) to a
-		// per-controller pool counter persisted on the controller itself.
-		// Pre-v6 saves don't carry the counter; on load, initContexts seeds
-		// m_nextModuleId from <c>max(existing module ids)</c> so subsequent
-		// allocations stay unique within the controller.  This version ALSO
-		// gates the one-time duplicate-id migration: saves at v5- may carry
-		// duplicate Module.Id values across controllers (from blueprint copy-
-		// paste), and on load we regenerate every module's ID and remap all
-		// InputModules connections to match.  Once saved at this version,
-		// subsequent loads skip the migration.
+		// Controller serialization version that gates the one-time duplicate-id
+		// migration: saves at v5- may carry duplicate Module.Id values across
+		// controllers (from blueprint copy-paste), and on load we regenerate
+		// every module's ID and remap all InputModules connections to match.
+		// Once saved at this version, subsequent loads skip the migration.
+		// IMPORTANT: this version DOES NOT add any field to the payload.  Fork
+		// HEAD shipped saves stamped at v6 with the same trailing layout as v5
+		// (CustomDescription is the last field), so changing the on-disk
+		// payload at this version would misalign every v6 save written before
+		// the change.  See CONTROLLER_MODULE_ID_POOL_FIELD below for the
+		// version that introduces the persisted m_nextModuleId.
 		public const int CONTROLLER_MODULE_ID_POOL = 6;
+
+		// Controller serialization version that adds the persisted
+		// <c>m_nextModuleId</c> counter at the end of the controller's data
+		// block.  Pre-v7 saves don't carry it; initContexts seeds the global
+		// ModuleIdManager from <c>max(existing module ids)</c> via
+		// <c>EnsureAtLeast</c> instead so the next AllocateModuleId can't
+		// collide with legacy ids that came along for the ride.  Bumped from
+		// CONTROLLER_MODULE_ID_POOL=6 because fork HEAD already shipped v6
+		// saves without this field — reading 8 unprovided bytes there shifts
+		// the entire downstream stream and produces phantom duplicate-id
+		// entity collisions during dict initAfterLoad.
+		public const int CONTROLLER_MODULE_ID_POOL_FIELD = 7;
 
 		private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction = delegate(object obj, BlobWriter writer)
 		{
@@ -398,9 +410,10 @@ namespace ProgramableNetwork
 			}
 			else
 			{
-				// Pre-v6 saves had no persisted module-id pool counter.  Seed the legacy
-				// per-controller field from the highest existing module id (kept on
-				// disk for round-trip compatibility).
+				// Pre-CONTROLLER_MODULE_ID_POOL_FIELD (v7) saves had no persisted
+				// module-id pool counter — m_nextModuleId stayed 0 after deserialize.
+				// Seed the legacy per-controller field from the highest existing
+				// module id (kept on disk for round-trip compatibility).
 				if (m_nextModuleId == 0)
 				{
 					long maxId = 0;
@@ -597,7 +610,7 @@ namespace ProgramableNetwork
 		{
 			base.SerializeData(writer);
 			writer.WriteString(m_protoId.Value);
-			writer.WriteInt(/*Version*/ CONTROLLER_MODULE_ID_POOL);
+			writer.WriteInt(/*Version*/ CONTROLLER_MODULE_ID_POOL_FIELD);
 
 			writer.WriteString(ErrorMessage ?? "");
 			Option<string>.Serialize(CustomTitle, writer);
@@ -622,9 +635,11 @@ namespace ProgramableNetwork
 			// is the safe default for old saves loaded back through the v<5 branch.
 			Option<string>.Serialize(CustomDescription, writer);
 
-			// CONTROLLER_MODULE_ID_POOL (v6+): per-controller monotonic module-id
-			// counter.  Old saves load with 0 here and the post-load init seeds it
-			// from max(existing module ids) before any AllocateModuleId call.
+			// CONTROLLER_MODULE_ID_POOL_FIELD (v7+): persisted module-id pool counter.
+			// MUST stay gated on the _FIELD version, not CONTROLLER_MODULE_ID_POOL,
+			// because fork HEAD shipped v6 saves without this field.  Reading 8 unprovided
+			// bytes there shifts the entire downstream stream and produces phantom
+			// duplicate-id entity collisions during dict initAfterLoad.
 			writer.WriteLong(m_nextModuleId);
 		}
 
@@ -698,11 +713,15 @@ namespace ProgramableNetwork
 				CustomDescription = Option<string>.Deserialize(reader);
 			}
 
-			// CONTROLLER_MODULE_ID_POOL (v6+): persisted module-id pool counter.
-			// Pre-v6 saves don't carry it; initContexts seeds it from max(existing
-			// module ids) so the next AllocateModuleId can't collide with legacy
-			// time-based ids that came along for the ride.
-			if (version >= CONTROLLER_MODULE_ID_POOL)
+			// CONTROLLER_MODULE_ID_POOL_FIELD (v7+): persisted module-id pool counter.
+			// Pre-v7 saves don't carry it; initContexts seeds the global ModuleIdManager
+			// from max(existing module ids) via EnsureAtLeast so the next AllocateModuleId
+			// can't collide with legacy time-based ids that came along for the ride.
+			// CRITICAL: this gate is on the _FIELD version, not CONTROLLER_MODULE_ID_POOL —
+			// fork HEAD shipped v6 saves without this field (same trailing layout as v5),
+			// and reading 8 bytes there shifts the entire downstream stream and produces
+			// phantom duplicate-id entity collisions during dict initAfterLoad.
+			if (version >= CONTROLLER_MODULE_ID_POOL_FIELD)
 			{
 				m_nextModuleId = reader.ReadLong();
 			}
