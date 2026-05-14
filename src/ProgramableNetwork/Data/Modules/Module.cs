@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Mafi.Collections.ImmutableCollections;
 using Mafi.Core.Research;
+using ProgramableNetwork.Python;
 using UnityEngine;
 
 namespace ProgramableNetwork
@@ -44,26 +45,35 @@ namespace ProgramableNetwork
 
 		private ModuleProto m_proto;
 		private string m_protoId;
+		[DoNotSave(0, null)]
+		private string m_originalProtoId;
 		private int loadedVersion;
+
+		/// <summary>
+		/// The proto id read from the save before any Deprecation swap.  Stays equal to
+		/// <c>Prototype.Id.Value</c> for modules that weren't migrated; differs when the
+		/// save's id was redirected through <see cref="Deprecation"/>.  Captured once during
+		/// <see cref="DeserializeData"/> and never overwritten — the <c>Prototype</c> setter
+		/// updates <c>m_protoId</c> but not this field.  Read by the controller's post-load
+		/// pass to look up the migration entry whose <c>OutputIdMap</c> may need to be
+		/// applied to consumer connectors.
+		/// </summary>
+		public string OriginalProtoId => m_originalProtoId ?? m_protoId;
+
+		/// <summary>
+		/// Save-format version this instance was deserialized at, or 0 for new instances.
+		/// Used as the version gate for <see cref="Deprecation.Migration.UntilVersion"/>.
+		/// </summary>
+		public int LoadedVersion => loadedVersion;
 
 		[DoNotSave]
 		private bool m_unlocked = false;
 		[DoNotSave]
 		private ImmutableArray<ResearchNode> m_researchNodes;
 
-		/// <summary>
-		/// Transient remap table set during deprecation migration in <see cref="initContexts"/>.
-		/// Maps old output pin ids to their new ids on the replacement prototype.  Used by
-		/// <see cref="Controller.initContexts"/> to fix up other modules' InputModules entries
-		/// that reference this module's old output ids before cable pruning runs.
-		/// Null when no migration occurred or when no output ids changed.
-		/// </summary>
-		[DoNotSave]
-		internal IReadOnlyDictionary<string, string> MigrationOutputIdRemap;
-
-		public Module(ModuleProto prototype, EntityContext context, Controller entity)
+		public Module(ModuleProto prototype, EntityContext context, Controller entity, long id)
 		{
-			this.Id = Controller.NextModuleId();
+			this.Id = id;
 			Prototype = prototype;
 			Context = context;
 			Controller = entity;
@@ -118,22 +128,30 @@ namespace ProgramableNetwork
 		public int DisplayExtensionCount { get; set; }
 
 		/// <summary>
-		/// Effective input list = prototype's static inputs followed by the first
-		/// <see cref="InputExtensionCount"/> extension entries.  Returns the proto's
-		/// list verbatim when no extensions are active to avoid the per-call alloc.
+		/// Effective input list = prototype's static inputs, followed by the first
+		/// <see cref="InputExtensionCount"/> extension entries, followed by any
+		/// trailing inputs.  Returns the proto's static list verbatim when nothing
+		/// else is active and there are no trailings, to avoid the per-call alloc.
 		/// </summary>
 		public IReadOnlyList<ModuleConnectorProto> EffectiveInputs
 		{
 			get
 			{
-				int ext = System.Math.Min(InputExtensionCount, Prototype?.MaxInputExtensions ?? 0);
-				if (ext <= 0 || Prototype == null) {
-					return Prototype?.Inputs ?? (IReadOnlyList<ModuleConnectorProto>)System.Array.Empty<ModuleConnectorProto>();
+				if (Prototype == null) {
+					return (IReadOnlyList<ModuleConnectorProto>)System.Array.Empty<ModuleConnectorProto>();
 				}
-				var list = new System.Collections.Generic.List<ModuleConnectorProto>(Prototype.Inputs.Count + ext);
+				int ext = System.Math.Min(InputExtensionCount, Prototype.MaxInputExtensions);
+				int trail = Prototype.InputsTrailing?.Count ?? 0;
+				if (ext <= 0 && trail == 0) {
+					return Prototype.Inputs;
+				}
+				var list = new System.Collections.Generic.List<ModuleConnectorProto>(Prototype.Inputs.Count + ext + trail);
 				list.AddRange(Prototype.Inputs);
 				for (int i = 0; i < ext; i++) {
 					list.Add(Prototype.InputExtensions[i]);
+				}
+				for (int i = 0; i < trail; i++) {
+					list.Add(Prototype.InputsTrailing[i]);
 				}
 				return list;
 			}
@@ -172,6 +190,13 @@ namespace ProgramableNetwork
 					return true;
 				}
 			}
+			if (Prototype.InputsTrailing != null) {
+				foreach (var p in Prototype.InputsTrailing) {
+					if (p.Id == id) {
+						return true;
+					}
+				}
+			}
 			return false;
 		}
 
@@ -194,7 +219,7 @@ namespace ProgramableNetwork
 			return false;
 		}
 
-		/// <summary>Resolves an input pin by id, searching both static and active extension entries; null when missing.</summary>
+		/// <summary>Resolves an input pin by id, searching static, active extension, and trailing entries; null when missing.</summary>
 		public ModuleConnectorProto GetInputProto(string id)
 		{
 			if (Prototype == null) {
@@ -209,6 +234,13 @@ namespace ProgramableNetwork
 			for (int i = 0; i < ext; i++) {
 				if (Prototype.InputExtensions[i].Id == id) {
 					return Prototype.InputExtensions[i];
+				}
+			}
+			if (Prototype.InputsTrailing != null) {
+				foreach (var p in Prototype.InputsTrailing) {
+					if (p.Id == id) {
+						return p;
+					}
 				}
 			}
 			return null;
@@ -247,11 +279,18 @@ namespace ProgramableNetwork
 			}
 			var statics = isOutput ? Prototype.Outputs : Prototype.Inputs;
 			var exts    = isOutput ? Prototype.OutputExtensions : Prototype.InputExtensions;
+			// Trailings only exist on the input side currently.  When pinning an
+			// output, treat the trailing list as empty.
+			var trailings = isOutput
+				? (System.Collections.Generic.IReadOnlyList<ModuleConnectorProto>)System.Array.Empty<ModuleConnectorProto>()
+				: (Prototype.InputsTrailing ?? (System.Collections.Generic.IReadOnlyList<ModuleConnectorProto>)System.Array.Empty<ModuleConnectorProto>());
 			int extCount = isOutput
 				? System.Math.Min(OutputExtensionCount, Prototype.MaxOutputExtensions)
 				: System.Math.Min(InputExtensionCount, Prototype.MaxInputExtensions);
 			int baseWidth = Layout.GetBaseWidth(this);
-			int innerFiller = System.Math.Max(0, baseWidth - statics.Count);
+			// innerFiller right-aligns the static block within whatever baseWidth
+			// claims after trailings reserve their own cells at the far right.
+			int innerFiller = System.Math.Max(0, baseWidth - statics.Count - trailings.Count);
 
 			for (int i = 0; i < statics.Count; i++) {
 				if (statics[i].Id == pinId) {
@@ -261,6 +300,16 @@ namespace ProgramableNetwork
 			for (int i = 0; i < extCount; i++) {
 				if (exts[i].Id == pinId) {
 					return Column + innerFiller + statics.Count + i;
+				}
+			}
+			// Trailing pin position depends only on THIS row's own extension count
+			// (statics + extensions), not on the module's total width.  Display or
+			// output extensions can widen the module past the active input cells,
+			// but the trailing input must stay glued to the end of the active
+			// input area — extra width is absorbed by outerFiller to its right.
+			for (int i = 0; i < trailings.Count; i++) {
+				if (trailings[i].Id == pinId) {
+					return Column + innerFiller + statics.Count + extCount + i;
 				}
 			}
 			return -1;
@@ -287,6 +336,39 @@ namespace ProgramableNetwork
 			newCount = System.Math.Max(0, System.Math.Min(newCount, max));
 			DisplayExtensionCount = newCount;
 			return newCount;
+		}
+
+		/// <summary>
+		/// Sets <paramref name="side"/>'s extension count and, when the prototype opted
+		/// in via <see cref="ModuleProto.LinkInputOutputExtensions"/>, mirrors the same
+		/// count to the other I/O side too.  Use this from the command executor instead
+		/// of <see cref="SetInputExtensionCount"/> / <see cref="SetOutputExtensionCount"/>
+		/// directly so the linked sides can never drift apart from a single +/- click.
+		/// Display side is always treated independently — display lock-step is a
+		/// separate concept driven by <see cref="ModuleProto.ExtensionDisplaysLinkedSide"/>.
+		/// Returns the actual new count (after each side's own clamp).
+		/// </summary>
+		public int SetExtensionCountLinked(ExtensionSide side, int newCount)
+		{
+			int applied;
+			switch (side)
+			{
+				case ExtensionSide.Input:
+					applied = SetInputExtensionCount(newCount);
+					if (Prototype != null && Prototype.LinkInputOutputExtensions) {
+						SetOutputExtensionCount(applied);
+					}
+					return applied;
+				case ExtensionSide.Output:
+					applied = SetOutputExtensionCount(newCount);
+					if (Prototype != null && Prototype.LinkInputOutputExtensions) {
+						SetInputExtensionCount(applied);
+					}
+					return applied;
+				case ExtensionSide.Display:
+				default:
+					return SetDisplayExtensionCount(newCount);
+			}
 		}
 
 		public int SetOutputExtensionCount(int newCount)
@@ -400,8 +482,48 @@ namespace ProgramableNetwork
 		// hash diverges from m_compiledSourceHash.
 		[DoNotSave(0, null)]
 		public object CompiledBlock { get; set; }
+		// Compiled cache for the PLC's init: section.  Same lifetime as
+		// CompiledBlock — recreated whenever the source hash diverges, never
+		// persisted (the Block AST itself isn't serializable; we re-tokenize
+		// + re-parse on first execute after load).
+		[DoNotSave(0, null)]
+		public object CompiledInitBlock { get; set; }
+		// Preamble — top-level code outside init: / main:.  Holds player-
+		// authored helper `def` / `class` definitions that should be
+		// callable from both sections.  Compiled once per source change;
+		// runs once per compile to register its functions into PlcContext
+		// so init / main pick them up via the persistent-vars overlay.
+		[DoNotSave(0, null)]
+		public object CompiledPreambleBlock { get; set; }
 		[DoNotSave(0, null)]
 		public int CompiledSourceHash { get; set; }
+
+		// Per-tick "live" runtime context — set by PlcPy.RunBlock at the
+		// start of each tick (preamble / init / main) to the dict the
+		// statements are actually executing against.  Preamble-registered
+		// Methods read this when invoked so their ChildContext parent is
+		// the *current* tick's scope (with init's freshly-set vars and
+		// main's running mutations) instead of the stale snapshot the
+		// preamble captured when it first registered them.  Cleared in
+		// the finally so a method called outside an active tick falls
+		// back to the captured preamble scope.
+		[DoNotSave(0, null)]
+		public System.Collections.Generic.IDictionary<string, object> CurrentPlcRuntime { get; set; }
+
+		// Player-defined variables that survive between init and run, and
+		// across run ticks.  Populated by PlcPy's init dispatch, mutated by
+		// each run tick, and serialised on save.  Stays null for non-PLC
+		// modules and lazy-allocated by the PLC code path so non-PLC
+		// instances pay nothing for the field.
+		//
+		// Only the subset of types PlcPy can serialise
+		// is round-tripped to the save (primitives + Fix32 + null);
+		// non-serialisable values (Constructor, Type, wrappers, generic
+		// collections) are dropped on save and won't reappear after load.
+		// The init: block re-runs after any non-Running result anyway, so
+		// dropping non-serialisable scratch values is recoverable.
+		[DoNotSave(0, null)]
+		public Dict<string, object> PlcContext { get; set; }
 
 		protected void SerializeData(BlobWriter writer)
 		{
@@ -411,7 +533,7 @@ namespace ProgramableNetwork
 
 			writer.WriteLong(Id);
 			writer.WriteString(m_protoId);
-			writer.WriteInt(/*Version*/ Controller.MODULE_DISPLAY_EXTENSIONS);
+			writer.WriteInt(/*Version*/ Controller.MODULE_PLC_CONTEXT);
 			writer.WriteBool(IsPaused);
 			writer.WriteInt((int)Status);
 
@@ -452,12 +574,26 @@ namespace ProgramableNetwork
 			writer.WriteInt(InputExtensionCount);
 			writer.WriteInt(OutputExtensionCount);
 			writer.WriteInt(DisplayExtensionCount);
+
+			// v9+ MODULE_PLC_CONTEXT: PLC-PY persistent scratch dict.  Always
+			// written (count int + entries) — empty/missing context produces
+			// `0` for the count and zero entry bytes, so non-PLC modules pay
+			// 4 bytes per save, which is negligible and avoids burning a flag
+			// bit on it.  Whitelisted types only; non-serialisable values
+			// (Constructors, Type, wrappers) are dropped on save.  See
+			// PlcContextSerializer.IsSerialisable for the supported set.
+			PlcContextSerializer.Serialize(PlcContext, writer);
 		}
 
 		protected void DeserializeData(BlobReader reader)
 		{
 			Id = reader.ReadLong();
 			m_protoId = reader.ReadString();
+			// Snapshot the save's original proto id once — the Prototype setter (called
+			// later by initContexts when a Deprecation entry swaps protos) overwrites
+			// m_protoId, so without this capture we couldn't tell migrated modules apart
+			// from native ones in the controller's post-load remap pass.
+			m_originalProtoId = m_protoId;
 			loadedVersion = reader.ReadInt();
 			IsPaused = reader.ReadBool();
 			if (loadedVersion >= 2) {
@@ -510,6 +646,21 @@ namespace ProgramableNetwork
 				{
 					DisplayExtensionCount = 0;
 				}
+
+				// v9+ MODULE_PLC_CONTEXT: PLC-PY scratch dict (player vars
+				// from init/run).  Pre-v9 saves don't carry it — start with
+				// a fresh empty dict so the next Action can run init: from
+				// a clean slate.  Same shape on read regardless of whether
+				// the module is a PLC instance or not (non-PLC modules
+				// simply leave the dict alone).
+				if (loadedVersion >= Controller.MODULE_PLC_CONTEXT)
+				{
+					PlcContext = PlcContextSerializer.Deserialize(reader);
+				}
+				else
+				{
+					PlcContext = new Dict<string, object>();
+				}
 			}
 			else
 			{
@@ -540,9 +691,12 @@ namespace ProgramableNetwork
 				// else: position is back-filled by Controller from its legacy Rows table.
 
 				ArrayData = System.Array.Empty<Fix32>();
+				// Pre-v5 (and pre-v9) saves never wrote a PLC context — start
+				// the dict empty so the next Action can populate it from init.
+				PlcContext = new Dict<string, object>();
 			}
 
-			// Log.Info($"[Programable Network] Instance (deserialization): {GetHashCode()}({Id}), version: {loadedVersion}");
+			Log.Info($"[Programable Network] Instance (deserialization): {GetHashCode()}({Id}), version: {loadedVersion}");
 		}
 
 		[InitAfterLoad(InitPriority.High)]
@@ -550,51 +704,70 @@ namespace ProgramableNetwork
 		public void initContexts(int saveVersion)
 		{
 			Option<ModuleProto> Prototype = Context.ProtosDb.Get<ModuleProto>(new ModuleProto.ID(m_protoId));
-			// Log.Info($"[Programable Network] Instance (init): {GetHashCode()}({Id}), version: {loadedVersion}");
+			Log.Info($"[Programable Network] Instance (init): {GetHashCode()}({Id}), version: {loadedVersion}");
+
+			// Always consult Deprecation — it can carry pin-rename entries for protos that
+			// are still registered (Replacement == null), so the proto-found branch needs
+			// the migration too.  Version-gated entries return null below the gate via
+			// AppliesAt, in which case we fall through to the no-migration path.
+			Deprecation.Migration? migration = Deprecation.GetMigration(new ModuleProto.ID(m_protoId));
+			if (migration.HasValue && !migration.Value.AppliesAt(loadedVersion)) {
+				migration = null;
+			}
 
 			if (Prototype.HasValue)
 			{
 				this.Prototype = Prototype.Value;
 			}
+			else if (migration.HasValue && migration.Value.Replacement.HasValue)
+			{
+				this.Prototype = Context.ProtosDb.Get<ModuleProto>(migration.Value.Replacement.Value)
+					.ValueOrThrow("Invalid module proto: " + m_protoId);
+			}
 			else
 			{
-				Deprecation.Migration? migration = Deprecation.GetMigration(new ModuleProto.ID(m_protoId));
-				if (migration.HasValue) {
-					this.Prototype = Context.ProtosDb.Get<ModuleProto>(migration.Value.Replacement)
-						.ValueOrThrow("Invalid module proto: " + m_protoId);
-					// Apply ext-count migration when the deprecation entry asked for one —
-					// e.g. Sum_4 → Sum sets InputExtensionCount=2 so the migrated module
-					// has the same four input pins as the legacy save.  The clamping in the
-					// post-load pass below caps the value at the new proto's max.
-					if (migration.Value.InputExtensionCount.HasValue) {
-						InputExtensionCount = migration.Value.InputExtensionCount.Value;
-					}
-					if (migration.Value.OutputExtensionCount.HasValue) {
-						OutputExtensionCount = migration.Value.OutputExtensionCount.Value;
-					}
-					if (migration.Value.DisplayExtensionCount.HasValue) {
-						DisplayExtensionCount = migration.Value.DisplayExtensionCount.Value;
-					}
-					// Pin-id remap: when the replacement prototype renamed input pins,
-					// rewrite this module's InputModules keys so the connections survive
-					// cable pruning.  Output-id remap is stored for Controller to apply
-					// on OTHER modules' InputModules that reference this module's outputs.
-					if (migration.Value.InputIdRemap != null) {
-						foreach (var kv in migration.Value.InputIdRemap) {
-							if (InputModules.TryGetValue(kv.Key, out var connector)) {
-								InputModules.Remove(kv.Key);
-								InputModules[kv.Value] = connector;
-							}
-						}
-					}
-					MigrationOutputIdRemap = migration.Value.OutputIdRemap;
-				} else {
-					// No proto and no Deprecation replacement — leave a visible tombstone with
-					// a clear error string so the hover tooltip explains *which* prototype is
-					// missing.  Phantom's per-tick Action also reports ModuleStatus.Error.
-					this.Prototype = ModuleProto.Phantom;
-					SetError($"Original module '{m_protoId}' no longer exists. Remove it or install the mod that provides it.");
-					SetStatus(ModuleStatus.Error);
+				// No proto and no Deprecation replacement — leave a visible tombstone with
+				// a clear error string so the hover tooltip explains *which* prototype is
+				// missing.  Phantom's per-tick Action also reports ModuleStatus.Error.
+				this.Prototype = ModuleProto.Phantom;
+				SetError($"Original module '{m_protoId}' no longer exists. Remove it or install the mod that provides it.");
+				SetStatus(ModuleStatus.Error);
+			}
+
+			if (migration.HasValue)
+			{
+				// Apply ext-count migration when the deprecation entry asked for one —
+				// e.g. Sum_4 → Sum sets InputExtensionCount=2 so the migrated module
+				// has the same four input pins as the legacy save.  The clamping below
+				// caps the value at the new proto's max.
+				if (migration.Value.InputExtensionCount.HasValue) {
+					InputExtensionCount = migration.Value.InputExtensionCount.Value;
+				}
+				if (migration.Value.OutputExtensionCount.HasValue) {
+					OutputExtensionCount = migration.Value.OutputExtensionCount.Value;
+				}
+				if (migration.Value.DisplayExtensionCount.HasValue) {
+					DisplayExtensionCount = migration.Value.DisplayExtensionCount.Value;
+				}
+
+				// Rename keys of InputModules using the migration's input id map.  This
+				// preserves cables coming INTO this module when the new prototype uses
+				// different pin ids than the saved one.  Outgoing cables (other modules
+				// referencing this one's outputs) are remapped in the controller's
+				// post-load pass via OutputIdMap.  We also rename InputNumberData (the
+				// persisted per-input scratch values) so they stay attached to the
+				// renamed pin instead of going dead under the old key.
+				if (migration.Value.InputIdMap != null)
+				{
+					renameKeysInPlace(InputModules, migration.Value.InputIdMap, "input pin (cable)");
+					renameKeysInPlace(InputNumberData, migration.Value.InputIdMap, "input pin (number)");
+				}
+				if (migration.Value.OutputIdMap != null)
+				{
+					// Outgoing cables are stored on consumers, not here — remapped in
+					// Controller.initContexts.  This module's own OutputNumberData scratch
+					// dict is keyed by output pin id, so rename it here.
+					renameKeysInPlace(OutputNumberData, migration.Value.OutputIdMap, "output pin (number)");
 				}
 			}
 
@@ -636,6 +809,7 @@ namespace ProgramableNetwork
 					DisplayExtensionCount = this.Prototype.MaxDisplayExtensions;
 				}
 			}
+
 			if (loadedVersion < 3)
 			{
 				var keysToRemove = new System.Collections.Generic.List<string>();
@@ -657,13 +831,31 @@ namespace ProgramableNetwork
 						keysToRemove.Add(kvp.Key);
 					}
 				}
-				if (keysToRemove.Count > 0)
-				{
-					Log.Info($"[Programable Network] Migration v{loadedVersion}->v3: migrated {keysToRemove.Count} prefixed keys from NumberData for module {Id} ({m_protoId})");
-				}
 				foreach (var k in keysToRemove)
 				{
 					NumberData.TryRemove(k, out _);
+				}
+			}
+		}
+
+		// Rename string keys of <paramref name="dict"/> in-place using <paramref name="map"/>.
+		// Used during Deprecation pin-rename application — preserves the value but moves it
+		// from the old pin id to the new one.  Last-write-wins if both ids ended up populated:
+		// the explicit-rename intent overrides any stale pre-existing entry under newKey.
+		private void renameKeysInPlace<TValue>(Dict<string, TValue> dict,
+			IReadOnlyDictionary<string, string> map, string what)
+		{
+			if (dict == null || dict.Count == 0 || map == null) {
+				return;
+			}
+			foreach (var kv in dict.ToList())
+			{
+				if (map.TryGetValue(kv.Key, out string newKey)
+					&& !string.Equals(kv.Key, newKey, StringComparison.Ordinal))
+				{
+					dict.Remove(kv.Key);
+					dict[newKey] = kv.Value;
+					Log.Info($"[Programable Network] Module {Id}: {what} renamed '{kv.Key}' -> '{newKey}' via Deprecation");
 				}
 			}
 		}
@@ -717,6 +909,27 @@ namespace ProgramableNetwork
 		public void SetError(string message)
 		{
 			Error = message;
+		}
+
+		public void CopyFrom(Module other)
+		{
+			// Copying over the entire state, including volatile runtime data.  Used by
+			// the controller's CloneModule command to duplicate an existing module along
+			// with its current values and connections.
+			InputExtensionCount = other.InputExtensionCount;
+			OutputExtensionCount = other.OutputExtensionCount;
+			DisplayExtensionCount = other.DisplayExtensionCount;
+			Error = other.Error;
+			Status = other.Status;
+			IsPaused = other.IsPaused;
+			IsDebugging = other.IsDebugging;
+			NumberData = new Dict<string, int>(other.NumberData);
+			InputNumberData = new Dict<string, Fix32>(other.InputNumberData);
+			OutputNumberData = new Dict<string, Fix32>(other.OutputNumberData);
+			FieldNumberData = new Dict<string, Fix32>(other.FieldNumberData);
+			StringData = new Dict<string, string>(other.StringData);
+			ArrayData = (Fix32[])other.ArrayData.Clone();
+			InputModules = new Dict<string, ModuleConnector>(other.InputModules);
 		}
 
 		[DoNotSave(0, null)]
@@ -793,7 +1006,7 @@ namespace ProgramableNetwork
 
 				if (m_researchNodes.IsNotValidOrEmpty) {
 					m_researchNodes = Prototype.ResearchDependency
-						.Map(Controller.ResearchManager.GetResearchNode);
+						.Map(Controller.Resolver.Resolve<ResearchManager>().GetResearchNode);
 				}
 
 				foreach (ResearchNode researchNode in m_researchNodes) {

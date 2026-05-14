@@ -28,6 +28,11 @@ public static class PlcPySyntax {
 	// glance — it's the only player-visible variable that's pre-bound by
 	// the runtime, which is worth signalling differently from `if`/`def`.
 	private const string COLOR_SELF     = "#c586c0";  // violet — the implicit `self` binding
+	// Function / method names — both at definition (`def NAME(`) and at
+	// call sites (`NAME(`).  Same yellow VS Code Dark+ uses for callables;
+	// makes the script's "what gets invoked" visually pop against the
+	// surrounding identifiers and keywords.
+	private const string COLOR_METHOD   = "#dcdcaa";  // yellow — function / method names
 
 	// Identifier docs displayed when the player hovers a known name in
 	// the editor.  Keep entries short — these render in a tooltip strip.
@@ -56,7 +61,10 @@ public static class PlcPySyntax {
 			case "":
 				return new[] {
 					new Completion("self",  "Module wrapper bound to this PLC instance."),
-					new Completion("fix",   "fix(value) — convert int/float to Fix32."),
+					new Completion("fix",   "fix(value) — convert int/float to Fix32 (value-preserving)."),
+					new Completion("int",   "int(value) — Fix32 → int (truncates), inverse of fix(...)."),
+					new Completion("raw",   "raw(value) — Fix32 → underlying raw int (Fix32.RawValue)."),
+					new Completion("hex",   "hex(value) — int → Fix32 from raw bits (Fix32.FromRaw), inverse of raw(...)."),
 					new Completion("Fix32", "Fix32 type. Common: Fix32.Zero, Fix32.One, Fix32.Half."),
 					new Completion("True",  "Boolean true."),
 					new Completion("False", "Boolean false."),
@@ -67,7 +75,8 @@ public static class PlcPySyntax {
 					new Completion("and",   "Boolean and."),
 					new Completion("or",    "Boolean or."),
 					new Completion("not",   "Boolean not."),
-					new Completion("return","Exit current call with a value."),
+					new Completion("return","return STR sets an error message (stays Running). return ModuleStatus.X switches status."),
+					new Completion("ModuleStatus", "ModuleStatus.Running / .Paused / .Error — value to return from the script."),
 					new Completion("for",      "for VAR in EXPR: — iterate over a list/range."),
 					new Completion("while",    "while EXPR: — loop while expression is truthy."),
 					new Completion("break",    "Exit the innermost for/while immediately."),
@@ -75,6 +84,8 @@ public static class PlcPySyntax {
 					new Completion("in",       "Loop binder (for x in xs:) and membership test."),
 					new Completion("range",    "range(stop) / (start, stop) / (start, stop, step) — int sequence."),
 					new Completion("len",      "len(value) — string/list/dict size."),
+					new Completion("init",     "init: section — runs once after compile or after any non-Running result. Seeds variables that main: reuses each tick."),
+					new Completion("main",     "main: section — body executed every tick. Default when no init:/main: split is given."),
 				};
 			case "self":
 				return new[] {
@@ -119,6 +130,12 @@ public static class PlcPySyntax {
 					new Completion("One",      "Fix32 one."),
 					new Completion("Half",     "Fix32 0.5."),
 					new Completion("FromInt",  "Fix32.FromInt(i) — int → Fix32."),
+				};
+			case "ModuleStatus":
+				return new[] {
+					new Completion("Running", "Module is running normally — green LED."),
+					new Completion("Paused",  "Module is paused — yellow LED."),
+					new Completion("Error",   "Module is in an error state — red LED."),
 				};
 			default:
 				return EMPTY;
@@ -263,11 +280,19 @@ public static class PlcPySyntax {
 		{ "self.Array",    "Persistent Fix32[] scratch buffer. .get(i, default), .set(i, v), .resize(n), .shift_left_with(v)." },
 		{ "self.NumberData", "Persistent int dictionary. ['key'] / .key indexer + dotted access." },
 		{ "self.StringData", "Persistent string dictionary. Same shape as NumberData." },
-		{ "fix",           "fix(value) — convert int/float to Fix32." },
+		{ "fix",           "fix(value) — convert int/float to Fix32 (value-preserving). Inverse of int(...)." },
+		{ "int",           "int(value) — Fix32 → int (truncates toward zero via Fix32.IntegerPart). Inverse of fix(...)." },
+		{ "raw",           "raw(value) — Fix32 → underlying raw int (Fix32.RawValue). Inverse of hex(...). Use for save round-trips or bit-level inspection." },
+		{ "hex",           "hex(value) — int → Fix32 from raw bits (Fix32.FromRaw). Inverse of raw(...). Reconstructs a Fix32 from a previously stored raw int." },
 		{ "Fix32",         "Fix32 type. Common: Fix32.Zero, Fix32.One, Fix32.Half." },
 		{ "True",          "Boolean true." },
 		{ "False",         "Boolean false." },
 		{ "None",          "Null / not-connected sentinel." },
+		{ "return",        "return STR — sets the module error to STR and keeps it Running (red LED). return ModuleStatus.Running/.Paused/.Error — explicit status switch. Bare return (or no return) keeps the module Running with no error." },
+		{ "ModuleStatus",  "ModuleStatus enum: .Running (green LED), .Paused (yellow LED), .Error (red LED). Returnable from the script body." },
+		{ "ModuleStatus.Running", "Module is running normally — green LED." },
+		{ "ModuleStatus.Paused",  "Module is paused — yellow LED." },
+		{ "ModuleStatus.Error",   "Module is in an error state — red LED." },
 		{ "for",           "for VAR in EXPR: — iterate over a list, string, or range. break/continue allowed." },
 		{ "while",         "while EXPR: — loop while expression is truthy. Per-tick cap of 100k iterations." },
 		{ "break",         "Exit the innermost enclosing for/while immediately." },
@@ -275,6 +300,9 @@ public static class PlcPySyntax {
 		{ "in",            "Inside `for VAR in EXPR:` introduces the iteration; elsewhere it's a membership test (`x in xs`)." },
 		{ "range",         "range(stop) / range(start, stop) / range(start, stop, step) — returns a list of ints to iterate." },
 		{ "len",           "len(value) — length of a string, list, dict, or any iterable." },
+		{ "init",          "init: section header at column 0. Body runs once after the script compiles, and again after any tick that returns a non-Running ModuleStatus. Use it to seed scratch variables and per-instance state. Variables you assign here survive into main: and across main: ticks; they're saved with the world (whitelisted types only — primitives, strings, Fix32)." },
+		{ "main",          "main: section header at column 0. Body runs every tick against the same scope as init: and the preamble. If the script has no `init:` / `main:` headers at all, the entire source is treated as main:." },
+		{ "def",           "def NAME(args): … — top-level function definition. Place it OUTSIDE any init: / main: section (the preamble) to make it callable from both. The function survives across ticks within a session; saves drop it (Methods aren't serialisable) but the preamble re-runs on load to recreate it." },
 	};
 
 	// Walks the tokens once, building a colored rich-text version of the
@@ -299,8 +327,29 @@ public static class PlcPySyntax {
 
 		List<int> lineOffsets = ComputeLineOffsets(source);
 		List<ColorSpan> spans = new List<ColorSpan>(tokens.Length);
-		foreach (Token token in tokens) {
+		for (int ti = 0; ti < tokens.Length; ti++) {
+			Token token = tokens[ti];
 			string color = ColorFor(token);
+			// Method coloring — applied as a post-pass on `name` tokens so
+			// the existing keyword / `self` / `init`/`main` checks in
+			// ColorFor stay first.  Two heuristics matching VS Code's
+			// "callable" yellow:
+			//   1. Definition site: previous non-trivial token is `def`,
+			//      so the next `name` is the function being defined.
+			//   2. Call site: next non-trivial token is `lparen`, so the
+			//      `name` is being invoked.  Catches both `helper(...)`
+			//      and dotted calls (`obj.method(...)` — the `method` name
+			//      is followed by `lparen`).
+			// "Non-trivial" means we skip newline tokens when peeking, so
+			// a `def\n NAME` (rare but legal) still highlights NAME.
+			if (color == null && token.type == PythonTokens.name) {
+				Token prev = PrevNonTrivial(tokens, ti);
+				Token next = NextNonTrivial(tokens, ti);
+				if ((prev != null && prev.type == PythonTokens.def)
+					|| (next != null && next.type == PythonTokens.lparen)) {
+					color = COLOR_METHOD;
+				}
+			}
 			if (color == null) {
 				continue;
 			}
@@ -352,6 +401,41 @@ public static class PlcPySyntax {
 		public string Color;
 	}
 
+	// Walk forward / backward through the token stream skipping the
+	// trivial tokens that don't affect the keyword-vs-callable
+	// classification.  Newlines + comments would otherwise hide a
+	// `def\n NAME` definition or a `NAME\n(` call from the lookahead /
+	// lookbehind, even though both are syntactically equivalent to the
+	// adjacent forms.  `indent` / `dedent` are also skipped because the
+	// section split for `init:` / `main:` introduces them between the
+	// def and its body.
+	private static Token NextNonTrivial(Token[] tokens, int from) {
+		for (int i = from + 1; i < tokens.Length; i++) {
+			if (IsTriviaForCallableLookup(tokens[i])) {
+				continue;
+			}
+			return tokens[i];
+		}
+		return null;
+	}
+
+	private static Token PrevNonTrivial(Token[] tokens, int from) {
+		for (int i = from - 1; i >= 0; i--) {
+			if (IsTriviaForCallableLookup(tokens[i])) {
+				continue;
+			}
+			return tokens[i];
+		}
+		return null;
+	}
+
+	private static bool IsTriviaForCallableLookup(Token t) {
+		return t.type == PythonTokens.newline
+			|| t.type == PythonTokens.comment
+			|| t.type == PythonTokens.indent
+			|| t.type == PythonTokens.dedent;
+	}
+
 	private static List<int> ComputeLineOffsets(string source) {
 		List<int> offsets = new List<int> { 0 };
 		for (int i = 0; i < source.Length; i++) {
@@ -369,6 +453,19 @@ public static class PlcPySyntax {
 		// new keyword that the lexer would then need to special-case.
 		if (token.type == PythonTokens.name && token.value == "self") {
 			return COLOR_SELF;
+		}
+		// `init:` and `main:` are also plain `name` tokens — the section
+		// split runs at the text level before the tokenizer, so the lexer
+		// never sees them as keywords.  Color them as keywords *only* when
+		// the token sits at column 1 (the section-split rule), so a player
+		// who happens to use `init` / `main` as a regular variable name
+		// inside a body keeps the default color.  We don't lookahead for
+		// the trailing `:` because that'd require buffering — column 1 is
+		// the cheaper proxy and matches the actual split semantics.
+		if (token.type == PythonTokens.name
+			&& token.column == 1
+			&& (token.value == "init" || token.value == "main")) {
+			return COLOR_KEYWORD;
 		}
 		switch (token.type) {
 			case PythonTokens.ifp:
@@ -409,6 +506,12 @@ public static class PlcPySyntax {
 			case PythonTokens.lr:
 			case PythonTokens.gr:
 			case PythonTokens.set:
+			case PythonTokens.setplus:
+			case PythonTokens.setminus:
+			case PythonTokens.setmul:
+			case PythonTokens.setdiv:
+			case PythonTokens.setshl:
+			case PythonTokens.setshr:
 			case PythonTokens.plus:
 			case PythonTokens.minus:
 			case PythonTokens.mul:

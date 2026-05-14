@@ -1,4 +1,4 @@
-﻿using Mafi;
+using Mafi;
 using Mafi.Core;
 using Mafi.Core.Entities;
 using Mafi.Core.Entities.Static.Layout;
@@ -37,7 +37,8 @@ namespace ProgramableNetwork.Data.Speaker
 
         public Option<string> CustomTitle { get; set; }
 
-        public Speaker(EntityId id, SpeakerProto proto, TileTransform transform, EntityContext context, IEntityMaintenanceProvidersFactory maintenanceProvidersFactory)
+        public Speaker(EntityId id, SpeakerProto proto, TileTransform transform, EntityContext context,
+         IEntityMaintenanceProvidersFactory maintenanceProvidersFactory, DependencyResolver resolver)
             : base(id, proto, transform, context)
         {
             Prototype = proto;
@@ -47,6 +48,7 @@ namespace ProgramableNetwork.Data.Speaker
             m_electricConsumer = Context.ElectricityConsumerFactory.CreateConsumer(this);
             m_maintenanceConsumer = maintenanceProvidersFactory.CreateFor(this);
             m_notificationInfoManager = Context.NotificationsManager.CreateNotificatorFor(ControllerNotification.SoundNotification);
+            Resolver = resolver;
         }
 
         [DoNotSave(0, null)]
@@ -72,7 +74,10 @@ namespace ProgramableNetwork.Data.Speaker
         [DoNotSave(0, null)]
         public override bool CanBePaused => true;
 
-        public void AddToConfig(EntityConfigData data)
+        [DoNotSave(resolveAfterLoad:typeof(DependencyResolver))]
+        public DependencyResolver Resolver { get; private set; }
+
+		public void AddToConfig(EntityConfigData data)
         {
             data.SetBool("isPlaying", IsPlaying);
             data.SetString("sound", Sound);
@@ -103,9 +108,10 @@ namespace ProgramableNetwork.Data.Speaker
 
         [InitAfterLoad(InitPriority.Normal)]
         [OnlyForSaveCompatibility(null)]
-        private void initContexts(int saveVersion)
+        private void initContexts(int saveVersion, DependencyResolver resolver)
         {
-            Log.Info($"Initialize context after load");
+            Resolver = resolver;
+			Log.Info($"Initialize context after load");
 
             Prototype = Context.ProtosDb.Get<SpeakerProto>(m_protoId).ValueOrThrow("Invalid antene proto: " + m_protoId);
             m_electricConsumer = m_electricConsumer ?? Context.ElectricityConsumerFactory.CreateConsumer(this);
@@ -261,12 +267,11 @@ namespace ProgramableNetwork.Data.Speaker
                 {
                     if (m_audioSource == null)
                     {
-                        m_audioSource = GlobalDependencyResolver.Get<UiContext>().AudioDb
-                            .GetClonedAudio(Sound, Mafi.Unity.Audio.AudioChannel.UserInterface);
+                        m_audioSource = Resolver.Resolve<UiContext>().AudioDb
+                           .GetClonedAudio(Sound, Mafi.Unity.Audio.AudioChannel.UserInterface);
                         m_audioSource.spatialBlend = 0f; // 2D sound — heard everywhere
                         m_audioSource.loop = false;
                     }
-
                     m_audioSource.transform.position = Position3f.ToVector3();
                     m_audioSource.volume = Volume.ToFloat();
                     m_audioSource.Play();

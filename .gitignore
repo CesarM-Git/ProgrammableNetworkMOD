@@ -27,3 +27,4 @@ desktop.ini
 /src/ExampleMod.Unity/AssetBundles/*.manifest
 !/src/ExampleMod.Unity/AssetBundles/mafi_bundles.manifest
 .claude/settings.local.json
+.claude/settings.json

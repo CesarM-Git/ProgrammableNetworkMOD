@@ -49,6 +49,12 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 	public ModuleConnector m_higlightedOutput;
 	public ModuleConnector m_higlightedInput;
 	public bool m_showsLinks;
+	// Per-inspector toggle for the click-action hint floaters: the "+ click to add"
+	// helper on empty slots and the LMB/Alt+LMB/Shift+LMB/RMB/Shift+RMB tooltip on
+	// placed modules.  Default on so first-time users still discover the keybinds;
+	// flips to off via the checkbox in the modules-panel header so power users can
+	// quiet the inspector once they know the shortcuts.
+	public bool m_showHints = true;
 	public IGameConsole m_console;
 
 	/// <summary>
@@ -66,16 +72,10 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 	public Module HoveredModuleGraphic;
 
 	/// <summary>
-	/// Active editor mode toggled by buttons in the Modules panel header.  Defaults to
-	/// <see cref="ControllerEditMode.Edit"/>.  Read by <see cref="ControllerView.ModuleView"/>
-	/// to decide what a click on a module does, and by free-slot rendering to decide whether
-	/// '+' adders are interactive.
-	/// </summary>
-	public ControllerEditMode Mode { get; set; } = ControllerEditMode.Edit;
-
-	/// <summary>
-	/// When non-null in <see cref="ControllerEditMode.Move"/>, the user has clicked this
-	/// module to "pick it up"; the next click on a free slot drops it there.
+	/// When non-null, the user has ALT+LMB-clicked this module to "pick it up"; the
+	/// next ALT+LMB on a free slot drops it there.  No edit mode gate any more —
+	/// pickup is purely modifier-driven and the visual cue (gold tint) is the only
+	/// indicator that a move is in flight.
 	/// </summary>
 	public Module PickedUpModule;
 
@@ -228,7 +228,18 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 				.FlexGrow(1)
 				.TextAlign(TextAlignment.CenterMiddle)
 			);
-		AddModeToggle(m_modulesPanel.Header);
+		// "Show hints" checkbox sits flush at the right end of the header.  Both
+		// floaters (slot "+ click to add" helper and per-module keybind tooltip)
+		// observe m_showHints and return Option<UiComponent>.None when off, so a
+		// single bool flip silences every hint at once.
+		Toggle hintsToggle = new Toggle();
+		hintsToggle.Value(m_showHints);
+		hintsToggle.LaterText<Toggle>(() => NewTr.Inspector.ShowHints, this, (t, v) => t.Tooltip(v));
+		hintsToggle.OnValueChanged(v => m_showHints = v);
+		m_modulesPanel.Header.Add(
+			new Label().LaterText(() => NewTr.Inspector.ShowHints, this).TinyFontSize().TextAlign(TextAlignment.RightMiddle),
+			hintsToggle
+		);
 		m_modulesPanel.BodyAdd(m_view = new ControllerView(this, refresh));
 
 		PanelWithHeader connectionsPanel = panels.AddAndReturn(new PanelWithHeader().Fill().HeightAuto());
@@ -242,7 +253,7 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 		connectionsPanel.BodyAdd(connectionsView);
 
 		HeaderButtons.AddAndReturn(new ButtonIcon(Button.Header, UserInterface.General.Connect128_png))
-			.OnClick(() => GlobalDependencyResolver.Get<ConnectionInfo>().Open(context.UiRoot))
+			.OnClick(() => Entity.Resolver.Resolve<ConnectionInfo>().Open(context.UiRoot))
 			.OnMouseEnterLeave(addPreviewHighlightAll, ClearPreviewHighlight);
 
 		// "Save controller as blueprint" — dual to the per-module save button in
@@ -252,7 +263,7 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 		// base-game blueprint browser.
 		ButtonIcon saveCtrlBp = new ButtonIcon(Button.Header, UserInterface.General.Save_svg);
 		saveCtrlBp.Tooltip("Save this controller (with modules) as a reusable blueprint".ToDoLoc());
-		saveCtrlBp.OnClick(() => SaveBlueprintDialog.ForController(Entity, saveCtrlBp, context));
+		saveCtrlBp.OnClick(() => SaveBlueprintDialog.ForController(Entity, saveCtrlBp, context, Entity.Resolver));
 		HeaderButtons.Add(saveCtrlBp);
 
 		m_colorButton = new ButtonIcon(UserInterface.Cursors.Paint32_png);
@@ -387,41 +398,6 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 	private void refresh() {
 		if (Entity is null) {
 			m_view.RedrawComponents();
-		}
-	}
-
-	private void AddModeToggle(RowContainer header)
-	{
-		// Three buttons (Edit / Add / Move) acting as a single-selection group.
-		// Active button is restyled via Cls.btn_primary; others use Cls.btn_general
-		// — same pattern used elsewhere (e.g. ModuleView's running/idle state).
-		var modes = new (ControllerEditMode mode, Func<LocStr> label)[]
-		{
-			(ControllerEditMode.Edit, () => NewTr.Inspector.Mode_Edit),
-			(ControllerEditMode.Add,  () => NewTr.Inspector.Mode_Add),
-			(ControllerEditMode.Move, () => NewTr.Inspector.Mode_Move),
-		};
-
-		foreach ((ControllerEditMode mode, Func<LocStr> labelGetter) in modes)
-		{
-			ButtonText btn = new ButtonText(new LocStrFormatted(""))
-				.Class(Cls.btn_toggleGroup)
-				.Height(Sizes.BLOCK_SIZE)
-				.Width(Sizes.BLOCK_SIZE * 2.5f);
-			btn.LaterText(labelGetter, this, (btn, v) => btn.Value(v));
-			btn.OnClick(() => {
-				if (Mode == ControllerEditMode.Move && mode != ControllerEditMode.Move)
-				{
-					// Leaving Move mode drops anything that was picked up.
-					PickedUpModule = null;
-				}
-				Mode = mode;
-				m_view.RedrawComponents();
-			});
-			btn.Observe(() => Mode).Do(active => {
-				btn.Selected(active == mode);
-			});
-			header.Add(btn);
 		}
 	}
 

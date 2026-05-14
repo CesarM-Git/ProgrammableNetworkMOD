@@ -91,14 +91,20 @@ namespace ProgramableNetwork
                 "Ticks per 60 seconds", "controller inspector: tooltip for the speed display");
             public static readonly LocStr Modules = Loc.Str("ProgramableNetwork_Inspector_Modules",
                 "Modules", "controller inspector: panel header above the module grid");
-            public static readonly LocStr Mode_Edit = Loc.Str("ProgramableNetwork_Inspector_Mode_Edit",
-                "Edit", "controller inspector: header toggle — only field floaters are usable, no add/move");
-            public static readonly LocStr Mode_Add = Loc.Str("ProgramableNetwork_Inspector_Mode_Add",
-                "Add", "controller inspector: header toggle — clicking a module copies it; '+' slots add new modules");
-            public static readonly LocStr Mode_Move = Loc.Str("ProgramableNetwork_Inspector_Mode_Move",
-                "Move", "controller inspector: header toggle — pick up a module by click, drop it on a free slot");
-            public static readonly LocStr Mode_PickedUp = Loc.Str("ProgramableNetwork_Inspector_Mode_PickedUp",
-                "Picked up — click free slot to drop", "controller inspector: status hint shown next to mode toggle while a module is being moved");
+            public static readonly LocStr ShowHints = Loc.Str("ProgramableNetwork_Inspector_ShowHints",
+                "Hints", "controller inspector: header checkbox label/tooltip — when on, hover hints (slot '+ click to add', per-module LMB/Alt+LMB/Shift+LMB/RMB/Shift+RMB cheatsheet) appear; when off, the inspector stays quiet");
+            public static readonly LocStr ExtensionCountInputs = Loc.Str("ProgramableNetwork_Inspector_ExtensionCountInputs",
+                "Additional input pins", "module picker settings dialog: label for the input-extension count row (counts EXTRA pins beyond the module's static base — clarified from 'Input pins' to make the additive semantic obvious)");
+            public static readonly LocStr ExtensionCountOutputs = Loc.Str("ProgramableNetwork_Inspector_ExtensionCountOutputs",
+                "Additional output pins", "module picker settings dialog: label for the output-extension count row (counts EXTRA pins beyond the module's static base)");
+            public static readonly LocStr ExtensionCountDisplays = Loc.Str("ProgramableNetwork_Inspector_ExtensionCountDisplays",
+                "Additional display cells", "module picker settings dialog: label for the display-extension count row (counts EXTRA cells beyond the display widget's static width)");
+            public static readonly LocStr ConfirmRemoveModule = Loc.Str("ProgramableNetwork_Inspector_ConfirmRemoveModule",
+                "Remove this module?", "controller inspector: question shown in the right-click confirmation dropdown before deleting a module");
+            public static readonly LocStr ConfirmRemoveYes = Loc.Str("ProgramableNetwork_Inspector_ConfirmRemoveYes",
+                "Remove", "controller inspector: confirm-remove dialog — destructive action button label");
+            public static readonly LocStr ConfirmRemoveCancel = Loc.Str("ProgramableNetwork_Inspector_ConfirmRemoveCancel",
+                "Cancel", "controller inspector: confirm-remove dialog — cancel button label");
             public static readonly LocStr All = Loc.Str("ProgramableNetwork_Inspector_All",
                 "All", "module picker: button that selects all category filters at once");
             public static readonly LocStr ControllerColor = Loc.Str("ProgramableNetwork_Inspector_ControllerColor",
@@ -117,8 +123,23 @@ namespace ProgramableNetwork
                 "Add new module", "controller inspector: helper hint for left-click to add a module");
             public static readonly LocStr AddFromTemplate = Loc.Str("ProgramableNetwork_Inspector_AddFromTemplate",
                 "Add from template", "controller inspector: helper hint for right-click to add from a template");
+            public static readonly LocStr Alt = Loc.Str("ProgramableNetwork_Inspector_Alt",
+                "Alt", "controller inspector: 'Alt' modifier-key label in placed-module hover hints");
+            public static readonly LocStr ModuleHintOpen = Loc.Str("ProgramableNetwork_Inspector_ModuleHintOpen",
+                "Open settings", "controller inspector: placed-module hover hint for plain LMB");
+            public static readonly LocStr ModuleHintMove = Loc.Str("ProgramableNetwork_Inspector_ModuleHintMove",
+                "Pick up / drop on free slot", "controller inspector: placed-module hover hint for Alt+LMB move flow");
+            public static readonly LocStr ModuleHintCopy = Loc.Str("ProgramableNetwork_Inspector_ModuleHintCopy",
+                "Copy as last created", "controller inspector: placed-module hover hint for Shift+LMB copy");
+            public static readonly LocStr ModuleHintRemove = Loc.Str("ProgramableNetwork_Inspector_ModuleHintRemove",
+                "Remove (with confirm)", "controller inspector: placed-module hover hint for plain RMB");
+            public static readonly LocStr ModuleHintRemoveDirect = Loc.Str("ProgramableNetwork_Inspector_ModuleHintRemoveDirect",
+                "Remove (no confirm)", "controller inspector: placed-module hover hint for Shift+RMB direct delete");
+			public static readonly LocStr NetworkVariablesTitle = Loc.Str(
+				"ProgramableNetwork_NetworkVariablesTitle",
+				"Network variables", "");
 
-            public static readonly LocStr Connections = Loc.Str("ProgramableNetwork_Inspector_Connections",
+			public static readonly LocStr Connections = Loc.Str("ProgramableNetwork_Inspector_Connections",
                 "Connections", "controller inspector: panel header for the per-module entity connections list");
             public static readonly LocStr ConnectionsEmpty = Loc.Str("ProgramableNetwork_Inspector_ConnectionsEmpty",
                 "No entity-bound fields", "controller inspector: shown in connections panel when no module has any entity field");
@@ -148,7 +169,7 @@ namespace ProgramableNetwork
                 "Shoot", "speaker sound option: turret shot");
             public static readonly LocStr Sound_Message = Loc.Str("ProgramableNetwork_Speaker_Sound_Message",
                 "Message", "speaker sound option: new message chime");
-        }
+		}
 
         public partial class FieldStatus
         {

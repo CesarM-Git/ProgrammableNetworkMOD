@@ -1,6 +1,7 @@
 using Mafi;
 using Mafi.Base;
 using Mafi.Base.Prototypes.Buildings.ThermalStorages;
+using Mafi.Base.Prototypes.Machines.PowerGenerators;
 using Mafi.Base.Prototypes.Trains;
 using Mafi.Core;
 using Mafi.Core.Buildings.Cargo.Modules;
@@ -13,8 +14,10 @@ using Mafi.Core.Entities;
 using Mafi.Core.Entities.Dynamic;
 using Mafi.Core.Entities.Priorities;
 using Mafi.Core.Entities.Static;
+using Mafi.Core.Factory;
 using Mafi.Core.Factory.ElectricPower;
 using Mafi.Core.Factory.Machines;
+using Mafi.Core.Factory.MechanicalPower;
 using Mafi.Core.Factory.NuclearReactors;
 using Mafi.Core.Factory.Recipes;
 using Mafi.Core.Factory.Sorters;
@@ -23,9 +26,12 @@ using Mafi.Core.Maintenance;
 using Mafi.Core.Mods;
 using Mafi.Core.Population;
 using Mafi.Core.Products;
+using Mafi.Core.Prototypes;
 using Mafi.Core.Trains;
 using Mafi.Core.Vehicles;
+using Mafi.Localization;
 using Mafi.Unity.InputControl;
+using Mafi.Unity.Ui.Library;
 using Mafi.Unity.UiToolkit.Component;
 using Mafi.Unity.UiToolkit.Library;
 using ProgramableNetwork.Data.Antene;
@@ -39,10 +45,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using Mafi.Base.Prototypes.Machines.PowerGenerators;
-using Mafi.Core.Factory.MechanicalPower;
-using Mafi.Localization;
-using Mafi.Unity.Ui.Library;
 using static Mafi.Unity.Assets.Unity;
 using static Mafi.Unity.Ui.Library.LogisticsZoneUIComponents;
 using CargoDepot = Mafi.Core.Buildings.Cargo.CargoDepot;
@@ -62,19 +64,20 @@ public class Modules : ModuleGroup, IModuleGroup {
 		// extensible prototype and records the InputExtensionCount that reproduces
 		// the original pin count (e.g. Sum_4 → Sum + 2 ext = 4 inputs).  Module-load
 		// path consults this table when a save references an unregistered proto.
-		//
-		// Sum_4/Sum_8 also need an output-id remap: the old modules used output "sum"
-		// but the extensible Sum uses output "c" (a+b=c naming).  Without the remap,
-		// any module wired to the old "sum" output loses its connection on load.
-		var sumOutputRemap = new Dictionary<string, string> { { "sum", "c" } };
+		// Sum_N also remap their output pin id "sum" -> "c" — the legacy modules
+		// declared their output as ("sum", "Sum") whereas the surviving Sum proto
+		// uses "c", so consumers' connectors carry "sum" and would be dropped
+		// without an explicit OutputIdMap.  Inputs match (a, b, c, d, ...) so no
+		// InputIdMap is needed.
+		Dictionary<string, string> sumOutputRemap = new Dictionary<string, string> { { "sum", "c" } };
 		Deprecation.RegisterDeprecation(
 			new ModuleProto.ID("Sum_4".ModuleId()),
-			new ModuleProto.ID("Sum".ModuleId()), inputExt: 2,
-			outputIdRemap: sumOutputRemap);
+			new ModuleProto.ID("Sum".ModuleId()),
+			inputExt: 2, outputIdMap: sumOutputRemap);
 		Deprecation.RegisterDeprecation(
 			new ModuleProto.ID("Sum_8".ModuleId()),
-			new ModuleProto.ID("Sum".ModuleId()), inputExt: 6,
-			outputIdRemap: sumOutputRemap);
+			new ModuleProto.ID("Sum".ModuleId()),
+			inputExt: 6, outputIdMap: sumOutputRemap);
 		Deprecation.RegisterDeprecation(
 			new ModuleProto.ID("Boolean_And_4".ModuleId()),
 			new ModuleProto.ID("Boolean_And_2".ModuleId()), inputExt: 2);
@@ -96,6 +99,16 @@ public class Modules : ModuleGroup, IModuleGroup {
 		Deprecation.RegisterDeprecation(
 			new ModuleProto.ID("Display_Int_16".ModuleId()),
 			new ModuleProto.ID("Display_Int".ModuleId()), displayExt: 14);
+		// Decision_Select_N → unified extensible Decision_Select.  The legacy
+		// modules declared 2 (Select_4) or 6 (Select_8) selectable pins;
+		// extensible base is 2, so Select_4 migrates with 0 ext and Select_8 with 4.
+		// Input pin ids and field ids match (a..f) so no remap dictionary is needed.
+		Deprecation.RegisterDeprecation(
+			new ModuleProto.ID("Decision_Select_4".ModuleId()),
+			new ModuleProto.ID("Decision_Select".ModuleId()), inputExt: 0);
+		Deprecation.RegisterDeprecation(
+			new ModuleProto.ID("Decision_Select_8".ModuleId()),
+			new ModuleProto.ID("Decision_Select".ModuleId()), inputExt: 4);
 
 		Constants(registrator);
 		Buttons(registrator);
@@ -122,7 +135,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.Action(m => {
 				m.Info = false;
 				if (m.Input["pause", 0] > Fix32.Zero) {
-					GlobalDependencyResolver.Get<GameSpeedController>().RequestPause();
+					m.Controller.Resolver.Resolve<GameSpeedController>().RequestPause();
 					m.Info = true;
 				} else {
 					m.Info = false;
@@ -423,21 +436,78 @@ public class Modules : ModuleGroup, IModuleGroup {
 	}
 
 	private void Stats(ProtoRegistrator registrator) {
+		UpointsManager upointsManager = null;
 		registrator
 			.ModuleBuilderStart("Stats_Unity", "Connection: Office - Unity", "UNI")
-			.SetDescription("Reads the captain's current Unity total via UpointsManager and outputs it on <b>v</b>. Errors if no CaptainOffice is linked in the <b>office</b> field.")
+			.SetDescription("Reads the captain's current Unity total via UpointsManager and outputs it on <b>v</b>, when extended it can read also maximum <b>max</b>, % <b>percent</b> or difference in last month <b>diff</b>. Display row shows the Unity icon, a trend arrow (when the diff extension is active) and the current value with an optional percentage (when the percent extension is active). Errors if no CaptainOffice is linked in the <b>office</b> field.")
 			.AddCategory(Category.Connection)
 			.AddCategory(Category.ConnectionRead)
 			.AddCategory(Category.Stats)
 			.AddOutput("v", "Unity value")
+			.AllowOutputExtensionsShared(3, x => x switch {
+				0 => ("max", "Max".Shared()),
+				1 => ("percent", "%".Shared()),
+				2 => ("diff", "Difference".Shared())
+			})
 			.AddEntityField<CaptainOffice>("office", "Captains office", "Must be placest next to Captains office")
+			.Width(1)
 			.Action(m => {
 				if (m.Field.Entity<CaptainOffice>("office") is null) {
 					return ModuleStatus.Error;
 				}
-
-				m.Output["v"] = Fix32.FromRaw(m.Context.UpointsManager.Quantity.Value);
+				upointsManager ??= m.Controller.Resolver.Resolve<UpointsManager>();
+				m.Output["v"] = Fix32.FromRaw(upointsManager.Quantity.Value);
+				if (m.OutputExtensionCount >= 1) {
+					m.Output["max"] = upointsManager.TotalUnityCap.Value;
+				}
+				if (m.OutputExtensionCount >= 2) {
+					m.Output["percent"] = (m.Output["v"] / m.Output["max"]) * 100;
+				}
+				if (m.OutputExtensionCount >= 3) {
+					m.Output["diff"] = upointsManager.DiffForLastMonth.Value;
+				}
 				return ModuleStatus.Running;
+			})
+			.AddDisplay("unity", "Unity", 1, image: true)
+			.AllowExtensionDisplays(ExtensionSide.Output, [
+				b => b.AddDisplay("value", "Value", 2),
+				b => b.AddDisplay("direction", "Trend", 1, image: true)
+			])
+			.Display(m => {
+				// Unity HUD icon stays put regardless of extensions — at-a-glance
+				// "this module is about Unity" cue for the inspector.
+				m.Display["unity"] = "#C8000a0Assets/Unity/UserInterface/Toolbar/UpointsTool.svg";
+
+				// Trend arrow only meaningful when the diff extension is active —
+				// otherwise blank so the cell visually reads as "no data".
+				if (m.OutputExtensionCount >= 3) {
+					Fix32 diff = m.Output["diff", Fix32.Zero];
+					bool up = diff > Fix32.Zero;
+					bool down = diff < Fix32.Zero;
+					string color = up ? "#C00FF00" : down ? "#CFF0000" : "";
+					string arrow = up
+						? UserInterface.General.MoveUp_svg
+						: down
+							? UserInterface.General.MoveDown_svg
+							: UserInterface.General.Minus128_png;
+					m.Display["direction"] = $"{color}{arrow}";
+				} else {
+					m.Display["direction"] = "";
+				}
+
+				// Value cell adapts to active extensions: bare integer when no
+				// percent ext, "VAL (P%)" when percent active.  State prefix
+				// colours the text by fill level using the same thresholds as
+				// the Maintenance module (red <25, orange <50, default <75,
+				// green >=75).
+				Fix32 v = m.Output["v", Fix32.Zero];
+				if (m.OutputExtensionCount >= 2) {
+					Fix32 p = m.Output["percent", Fix32.Zero];
+					string state = p < 25 ? "#E" : p < 50 ? "#W" : p < 75 ? "" : "#P";
+					m.Display["value"] = $"{state}{p.ToStringRounded(0)}%";
+				} else {
+					m.Display["value"] = "";
+				}
 			})
 			.AddControllerDevice()
 			.BuildAndAdd();
@@ -467,6 +537,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddControllerDevice()
 			.BuildAndAdd();
 
+		FieldInfo electricityManager = null;
 		registrator
 			.ModuleBuilderStart("Stats_Electricity", "Statistic: Electricity", "PWR")
 			.SetDescription("Reads global ElectricityManager metrics for the current tick. Outputs <b>consumption</b> (DemandedThisTick), <b>production</b> (GeneratedThisTick), <b>capacity</b> (GenerationCapacityThisTick) in kW, and <b>usage</b> as percentage 0-100 of consumption / capacity.")
@@ -474,33 +545,40 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddOutput("consumption", "Consumption")
 			.AddOutput("production", "Production")
 			.AddOutput("capacity", "Power capacity")
-			.AddOutput("usage", "Power usage (0-100)")
+			.AddOutput("demand", "Power demand")
 			.Width(4)
 			.Action(m => {
-				ElectricityManager electricity = m.Controller.ElectricityConsumer.Value.GetType()
-					.GetField("m_electricityManager", BindingFlags.Instance | BindingFlags.NonPublic)
-					.GetValue(m.Controller.ElectricityConsumer.Value) as ElectricityManager;
+				electricityManager ??= m.Controller.ElectricityConsumer.Value.GetType()
+					.GetField("m_electricityManager", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+				// Accessing the ElectricityManager through the ElectricityConsumer's private field is admittedly
+				// a bit hacky, but it avoids adding a new global dependency just for this module and keeps
+				// the electricity stats accurate to the current tick without needing to subscribe to updates or cache values.
+				ElectricityManager electricity = (ElectricityManager)electricityManager
+					.GetValue(m.Controller.ElectricityConsumer.Value);
 
 				Electricity consumption = electricity.DemandedThisTick;
 				Electricity production = electricity.GeneratedThisTick;
 				Electricity capacity = electricity.GenerationCapacityThisTick;
+				Electricity demand = electricity.DemandedThisTick;
 
 				m.Output["consumption"] = consumption.Value.ToFix32();
 				m.Output["production"] = production.Value.ToFix32();
 				m.Output["capacity"] = capacity.Value.ToFix32();
-				m.Output["usage"] = 100.ToFix32() * (consumption.Value.ToFix32() / capacity.Value.ToFix32());
+				m.Output["demand"] = demand.Value.ToFix32();
 			})
 			.AddDisplay("consumption", "Consumption", 1.2f.ToFix32())
 			.AddDisplay("production", "Production", 1.8f.ToFix32())
 			.AddDisplay("power", "Power", 1, image: true)
 			.Display(m => {
-				var stage = new[] { "kW", "MW", "GW", "TW" };
-				var cons = m.Output["consumption"];
-				var prod = m.Output["production"];
-				var cap = m.Output["capacity"];
-				var consUnit = 0;
-				var state = "";
-				if (prod == 0 || cons > prod) {
+				string[] stage = ["kW", "MW", "GW", "TW"];
+				Fix32 cons = m.Output["consumption"];
+				Fix32 prod = m.Output["production"];
+				Fix32 cap = m.Output["capacity"];
+				Fix32 dem = m.Output["demand"];
+				int consUnit = 0;
+				string state = "";
+				if (prod == 0 || cons > prod || dem > cap) {
 					state = "#E";
 				} else if (cons < (prod * 0.75f.ToFix32())) {
 					state = "#P";
@@ -603,15 +681,65 @@ public class Modules : ModuleGroup, IModuleGroup {
 				}
 
 				if (m.FieldOrInput.EntityProtoIconified("vehicle") is DynamicEntityProto drivingEntity) {
-					var stats = GlobalDependencyResolver.Get<IVehiclesManager>().GetStats(drivingEntity, 0xFFFFFFFFFFFFFFFF);
+					var stats = m.Controller.Resolver.Resolve<IVehiclesManager>().GetStats(drivingEntity, 0xFFFFFFFFFFFFFFFF);
 					m.Output.Integer["count"] = stats.Owned;
 					m.Output.Integer["assignable"] = stats.Assignable;
 					return ModuleStatus.Running;
 				}
 
-				m.Output.Integer["count"] = GlobalDependencyResolver.Get<IVehiclesManager>().AllVehicles.Count;
+				m.Output.Integer["count"] = m.Controller.Resolver.Resolve<IVehiclesManager>().AllVehicles.Count;
 				m.Output.Integer["assignable"] = 0;
 				return ModuleStatus.Running;
+			})
+			.AddControllerDevice()
+			.BuildAndAdd();
+
+		registrator
+			.ModuleBuilderStart("Stats_Efficiency", "Connection: Efficiency", "EFF")
+			.SetDescription("Reads productivity stats via IEntityWithProductivityCounter. Main output <b>%</b> is the productive percentage (0–100) over the last 12 months. Per-category tick counts are exposed as extension outputs <b>A–D</b>; their meaning depends on the entity (e.g. for a Machine: A=Working, B=MissingInput, C=FullOutput, D=CannotWork).")
+			.AddCategory(Category.Connection)
+			.AddCategory(Category.ConnectionRead)
+			.AddCategory(Category.Stats)
+			.AddEntityField<IEntityWithProductivityCounter>("entity", "Entity", "Building that is able to share productivity information")
+			.AddOutput("percent", "%")
+			.AllowOutputExtensionsShared(4, i => i switch {
+				0 => ("a", "A".Shared()),
+				1 => ("b", "B".Shared()),
+				2 => ("c", "C".Shared()),
+				3 => ("d", "D".Shared()),
+				_ => ($"x{i}", $"X{i}".Shared()),
+			})
+			.Width(2)
+			.Action(m => {
+				if (m.Field.Entity<IEntityWithProductivityCounter>("entity") is not IEntityWithProductivityCounter entity) {
+					m.SetError("No connected entity");
+					return ModuleStatus.Error;
+				}
+				// YearlyRolling smooths over the last 12 months; OngoingMonthlyData
+				// would zero at each month boundary and is dominated by the most
+				// recent few ticks until the month fills up.
+				var data = entity.ProductivityCounterHistory.YearlyRolling;
+				var labels = entity.ProductivityCounterLabels;
+				long productive = (long)data.CategoryA * labels.CategoryA.IsProductiveMult
+								+ (long)data.CategoryB * labels.CategoryB.IsProductiveMult
+								+ (long)data.CategoryC * labels.CategoryC.IsProductiveMult
+								+ (long)data.CategoryD * labels.CategoryD.IsProductiveMult;
+				long total = (long)data.CategoryA + data.CategoryB + data.CategoryC + data.CategoryD;
+				m.Output["percent"] = total > 0 ? (int)(productive * 100 / total) : 0;
+				if (m.OutputExtensionCount > 0) m.Output["a"] = data.CategoryA;
+				if (m.OutputExtensionCount > 1) m.Output["b"] = data.CategoryB;
+				if (m.OutputExtensionCount > 2) m.Output["c"] = data.CategoryC;
+				if (m.OutputExtensionCount > 3) m.Output["d"] = data.CategoryD;
+				return ModuleStatus.Running;
+			})
+			.AddDisplay("percent", "%", 2)
+			.Display(m => {
+				// Display prefix dialect parsed by ModuleView.StatusText:
+				// #P positive (green), #W warning (orange), #E danger (red),
+				// #I inactive (gray, used before any productivity has accumulated).
+				int p = m.Output["percent"].IntegerPart;
+				string prefix = p >= 80 ? "#P" : p >= 50 ? "#W" : p >= 1 ? "#E" : "#I";
+				m.Display["percent"] = prefix + p + "%";
 			})
 			.AddControllerDevice()
 			.BuildAndAdd();
@@ -1091,48 +1219,84 @@ public class Modules : ModuleGroup, IModuleGroup {
 	}
 
 	private void Decisions(ProtoRegistrator registrator) {
-		Action<Module> Select(int count) {
-			return m => {
+		ModuleProto.Builder builder = registrator
+			.ModuleBuilderStart("Decision_Select", "Select (extensible)", "SEL")
+			.SetDescription("Routes the first input pin <b>A</b>..<b>F</b> whose threshold field is &ge; <b>index</b> to <b>selected</b>; the integer 0..5 of the matching pin is emitted on <b>matched</b>. Falls back to <b>else</b> on <b>selected</b> and -1 on <b>matched</b> when no threshold matches. Grow from 2 to 6 selectable pins via right-edge extensions; the index display extends up to 16 cells to hold large index values.")
+			.AddCategory(Category.Decision)
+			.AddCategory(Category.Control)
+			.AddInput("index", "Index".Shared())
+			.AddInput("a", "A".Shared())
+			.AddInput("b", "B".Shared())
+			.AllowInputExtensionsShared(4, idx => idx switch {
+				0 => ("c", "C".Shared()),
+				1 => ("d", "D".Shared()),
+				2 => ("e", "E".Shared()),
+				3 => ("f", "F".Shared()),
+				_ => ($"x{idx}", $"X{idx}".Shared()),
+			})
+			// "Else" is a trailing pin so it stays anchored at the far-right edge
+			// no matter how many extensions the player adds — visually consistent
+			// with its semantic "use this when nothing matched".
+			.AddInputTrailing("else", "Else")
+			.AddOutput("matched", "Matched")
+			.AddOutput("selected", "Selected")
+			.AddDisplay("index", "Index", 4)
+			// Display grows up to 16 cells total (4 base + 4 ext).  Coupled with
+			// Width(4) below, the module's max footprint is exactly 8 cells —
+			// dominated by the display when fully extended.
+			.AllowDisplayExtensions(4)
+			.Width(4)
+			.AddControllerDevice()
+			.Action(m => {
 				Fix32 index = m.Input["index", Fix32.MaxValue];
-				int digits = count * 2;
-				string text = index.IntegerPart.ToString($"D{digits}");
-				m.Display["index"] = text.Length > digits ? text.Substring(text.Length - digits) : text;
 
-				for (int i = 0; i < count; i++) {
+				int displayCells = 4 + System.Math.Min(m.DisplayExtensionCount, 12);
+				int digits = displayCells * 2;
+				string text = index.IntegerPart.ToString($"D{digits}");
+				m.Display["index"] = text.Length > digits
+					? text.Substring(text.Length - digits)
+					: text;
+
+				// Fields a..f are declared statically below; only the
+				// (2 + InputExtensionCount) lowest are paired with active input
+				// pins.  Iteration stops at the first matching threshold so later
+				// fields' values don't affect routing.
+				int selectable = 2 + System.Math.Min(m.InputExtensionCount, 4);
+				for (int i = 0; i < selectable; i++) {
 					string name = NAMES[i];
-					Fix32 value = m.Field[name];
-					if (index <= value) {
+					Fix32 threshold = m.Field[name];
+					if (index <= threshold) {
 						m.Output["selected"] = m.Input[name, 0];
+						m.Output["matched"] = i;
 						return;
 					}
 				}
 				m.Output["selected"] = m.Input["else", 0];
-			};
+				m.Output["matched"] = -1;
+			});
+
+		// Info row introduces the threshold-bucket semantics once so the per-field
+		// labels below can stay as plain shared "A".."F" letters — saves six
+		// per-module translation keys per language and reads cleaner in the picker.
+		builder.AddInfoField("threshold_info",
+			"Each value below is the highest <b>index</b> that routes its matching input pin to <b>selected</b> (and emits its 0..5 position on <b>matched</b>). Pins are tested in order — the first whose threshold is &ge; <b>index</b> wins.");
+
+		// Fields can't be extension-grown, so all 6 thresholds are declared up
+		// front.  Defaults 0..5 form a natural index→pin bucketing (index=0 → A,
+		// =1 → B, …) and match the legacy Decision_Select_N defaults so migrated
+		// saves keep the same routing without the player having to re-tune.
+		// Fields C..F are linked to the matching extension input pin so each one
+		// only shows up when the player has actually added the extension — saves
+		// the player from staring at orphan thresholds for pins that don't exist.
+		for (int j = 0; j < 6; j++) {
+			builder.AddInt32Field(
+				NAMES[j],
+				NAMES[j].ToUpper().Shared(),
+				defaultValue: j,
+				linkedToInput: j < 2 ? null : NAMES[j]);
 		}
-		foreach (int i in new int[] { 4, 8 }) {
-			var builder = registrator
-				.ModuleBuilderStart($"Decision_Select_{i}", $"Select ({i - 1} pins, integer)", $"SEL-{i - 1}")
-				.SetDescription($"Routes the first input whose threshold field (<b>a</b>..<b>{NAMES[i - 3]}</b>) is >= <b>index</b> to <b>selected</b>; falls back to <b>else</b> if none match.")
-				.AddCategory(Category.Decision)
-				.AddCategory(Category.Control)
-				.AddInput("index", "Index")
-				.AddOutput("selected", "Selected")
-				.AddDisplay("index", "Index", i)
-				.AddControllerDevice()
-				// dynamic
-				.Action(Select(i - 2));
 
-			for (int j = 0; j < i - 2; j++) {
-				builder.AddInput(NAMES[j], NAMES[j].ToUpper());
-			}
-
-			for (int j = 0; j < i - 2; j++) {
-				builder.AddInt32Field(NAMES[j], NAMES[j].ToUpper() + ": Index ≤", defaultValue: j);
-			}
-
-			builder.AddInput("else", "Else");
-			builder.BuildAndAdd();
-		}
+		builder.BuildAndAdd();
 	}
 
 	// Configurable multi-tick delay was moved to Python — see Runtime_Delay_1
@@ -1223,9 +1387,12 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddControllerDevice()
 			.BuildAndAdd();
 
+		SettlementsManager settlementsManager = null; // lazy init in action to avoid circular dependency
+		Fix32 neg1 = (-1).ToFix32();
+		Fix32 neg2 = (-2).ToFix32();
 		registrator
 			.ModuleBuilderStart("Connection_Storage", "Connection: Storage", "STOCK")
-			.SetDescription("Reads the linked storage <b>entity</b> (storages, in/out buffers, virtual miners, FlyWheels, ThermalStorage). Outputs <b>quantity</b>, <b>capacity</b>, <b>fullness</b> (%), and stored <b>product</b> slim-id. With <b>field_product</b> set, filters buffers by the chosen <b>product</b>.")
+			.SetDescription("Reads the linked storage <b>entity</b> (storages, in/out buffers, virtual miners, FlyWheels, ThermalStorage, Settlements, or Captain Office). Outputs <b>quantity</b>, <b>capacity</b>, <b>fullness</b> (%), and stored <b>product</b> slim-id. With <b>field_product</b> set, filters buffers by the chosen <b>product</b>.")
 			.AddCategory(Category.Connection)
 			.AddCategory(Category.ConnectionRead)
 			.AddInput("product", "Product")
@@ -1235,7 +1402,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddOutput("product", "Product in #")
 			.AddEntityField<LayoutEntity>("entity", "Connected storage", "Storage connectable by cable 40m from"
 					+ " controller\nCan read everything with buffer information including Thermal Storage and"
-					+ " shaft of generators in single row.",
+					+ " shaft of generators in single row, and also Settlements and Captain Office (for population)",
 				filter: (m, e) => e
 					is IEntityWithStoredProductForUi
 					or IEntityWithInputBuffersForUi
@@ -1243,6 +1410,8 @@ public class Modules : ModuleGroup, IModuleGroup {
 					or IVirtualResourceMiningEntity
 					or FlyWheelEntity
 					or ThermalStorage
+					or SettlementHousingModule
+					or CaptainOffice
 				)
 			.AddProductField("product", "Product", "Select filter for product", overrideInput: true)
 			.Width(4)
@@ -1306,7 +1475,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 						m.Output["quantity"] = 0;
 						m.Output["capacity"] = 0;
 						m.Output["fullness"] = 100;
-						m.Output["product"] = -1;
+						m.Output["product"] = neg1;
 						return ModuleStatus.Running;
 					}
 
@@ -1317,19 +1486,46 @@ public class Modules : ModuleGroup, IModuleGroup {
 					return ModuleStatus.Running;
 				}
 
+				if (entity is SettlementHousingModule housing) {
+					int valuePopulation = housing.Settlement.Value.Population;
+					int valueTotalHousingCapacity = housing.Settlement.Value.TotalHousingCapacity;
+					m.Output["quantity"] = valuePopulation;
+					m.Output["capacity"] = valueTotalHousingCapacity;
+					m.Output["fullness"] = (int)(100f * valuePopulation / valueTotalHousingCapacity);
+					m.Output["product"] = neg2;
+					return ModuleStatus.Running;
+				}
+
+				if (entity is CaptainOffice office) {
+					settlementsManager ??= m.Controller.Resolver.Resolve<SettlementsManager>();
+					int valuePopulation = settlementsManager.GetTotalPopulation();
+					int valueTotalHousingCapacity = settlementsManager.TotalHousingCapacity;
+					m.Output["quantity"] = valuePopulation;
+					m.Output["capacity"] = valueTotalHousingCapacity;
+					m.Output["fullness"] = (int)(100f * valuePopulation / valueTotalHousingCapacity);
+					m.Output["product"] = neg2;
+					return ModuleStatus.Running;
+				}
+
 				m.Output["quantity"] = 0;
 				m.Output["capacity"] = 0;
 				m.Output["fullness"] = 100;
-				m.Output["product"] = -1;
+				m.Output["product"] = neg1;
 				return ModuleStatus.Error;
 			})
 			.AddDisplay("quantity", "Quantity", 1.5f.ToFix32())
 			.AddDisplay("fullness", "Fullness", 1.5f.ToFix32())
 			.AddDisplay("product", "Product", 1, image: true)
 			.Display((m) => {
-				m.Display["product"] = m.Output.Product("product")?.IconPath;
 				m.Display["quantity"] = Thousands(m.Output.Integer["quantity"]);
 				m.Display["fullness"] = $"{m.Output.Integer["fullness"]}%";
+				if (m.Output["product", 0] == neg1) {
+					m.Display["product"] = null;
+				} else if (m.Output["product", 0] == neg2) {
+					m.Display["product"] = UserInterface.General.Population_svg;
+				} else {
+					m.Display["product"] = m.Output.Product("product")?.IconPath;
+				}
 			})
 			.AddControllerDevice()
 			.BuildAndAdd();
@@ -1762,17 +1958,15 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.ModuleBuilderStart("Connection_Vehicle_Set", "Connection: Vehicle count (set)", "V-S")
 			.AddCategory(Category.Connection)
 			.AddCategory(Category.ConnectionRead)
-			.SetDescription("Sets count of vehicles assigned to the building, by default it takes vehicles from all zones. The <b>enable</b> toggle (or input) controls whether the module actively assigns/unassigns vehicles; when disabled the module unassigns all vehicles from the building.")
+			.SetDescription("Sets count of vehicles assigned to the building, by default it takes vehicles from all zones.")
 			.Width(4)
-			.AddInput("enable", "Enable assignment")
 			.AddInput("count", "Vehicle count")
 			.AddInput("vehicle", "Vehicle type")
-			.AddEntityField<IEntityAssignedWithVehicles>("building", "Building", "Any building with configurable priority (50 metres)")
+			.AddEntityField<IEntityAssignedWithVehicles>("building", "Building", "Any building with configurable priority (40 metres)")
 			.AddEntityTypeField<DrivingEntityProto>("vehicle", "Vehicle", "Any suppoted vehicle type",
 				filter: (m, p) => m.Field.Entity<Entity>("building") is IEntityAssignedWithVehicles w && w.CanVehicleBeAssigned(p),
 				overrideInput: true) // TODO filter by building
 			.AddInt32Field("count", "Vehicle count", defaultValue: 0, overrideInput: true)
-			.AddBooleanField("enable", "Enable assignment", defaultValue: true, overrideInput: true)
 			.AddCustomField("zone", "Vehicle zone",
 				(ControllerInspector inspector, UiComponent container, Module module, Action refresh, Reference reference) => {
 					Dropdown<LogisticsZone> zonesDropdown = new Dropdown<LogisticsZone>(
@@ -1785,22 +1979,6 @@ public class Modules : ModuleGroup, IModuleGroup {
 					container.Add(zonesDropdown);
 				})
 			.Action(m => {
-				if (!m.FieldOrInput.Bool["enable"]) {
-					// When disabled, unassign all vehicles from the building
-					var building = m.Field.Entity<IEntityAssignedWithVehicles>("building");
-					if (building is not null && building.AllVehicles.Count > 0) {
-						// Snapshot to list — collection is modified during iteration.
-						// IIndexable<T> doesn't implement IEnumerable<T>; call AsEnumerable() so
-						// ToList resolves to Enumerable.ToList (not ParallelEnumerable.ToList).
-						var toRemove = building.AllVehicles.AsEnumerable().ToList();
-						foreach (var veh in toRemove) {
-							building.UnassignVehicle(veh, cancelJobs: false);
-						}
-					}
-					m.Warning = false;
-					return ModuleStatus.Iddle;
-				}
-
 				var logistic = m.Field.Entity<IEntityAssignedWithVehicles>("building");
 				if (logistic is null) {
 					m.SetError("Building is not connected");
@@ -1826,7 +2004,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 					ulong zones = m.Field["zone", null] is { } zone
 						? ulong.Parse(zone)
 						: m.Controller.Context.LogisticsZonesManager.DefaultZone.Mask;
-					Option<Vehicle> v = GlobalDependencyResolver.Get<IVehiclesManager>()
+					Option<Vehicle> v = m.Controller.Resolver.Resolve<IVehiclesManager>()
 						.GetFreeVehicle<Vehicle>(drivingEntity, logistic.Position2f, zones);
 					if (v.HasValue) {
 						logistic.AssignVehicle(v.Value, doNotCancelJobs: true);
@@ -2168,7 +2346,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 					return ModuleStatus.Error;
 				}
 
-				TrainsManager trainsManager = GlobalDependencyResolver.Get<TrainsManager>();
+				TrainsManager trainsManager = m.Controller.Resolver.Resolve<TrainsManager>();
 
 				var isGroup = trainsManager.TrainStationManager
 					.TrainStationEntities.TryGetValue(stationBase, out var group);
@@ -2290,20 +2468,55 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.BuildAndAdd();
 	}
 
-	private string Thousands(int v) {
-		if (v > 1100000) {
-			return (v / 1000000).ToString();
+	// Caps the numeric portion at <paramref name="maxDigits"/> characters (digits +
+	// optional decimal dot) then appends a magnitude suffix.  Default budget is 4.
+	// Examples at maxDigits=4: 9999 → "9999", 10000 → "10.0k", 123456 → "123k",
+	// 1234567 → "1.23M", 1234567890 → "1.23B".  At maxDigits=3: 999 → "999",
+	// 1234 → "1.2k", 12345 → "12k", 1234567 → "1.2M".  At maxDigits=5: 12345 → "12345",
+	// 123456 → "123.4k", 1234567 → "1.234M".
+	private string Thousands(int v, int maxDigits = 4) {
+		if (v < 0) {
+			// Guard against int.MinValue: -int.MinValue overflows back to itself.
+			return "-" + Thousands(v == int.MinValue ? int.MaxValue : -v, maxDigits);
 		}
-		if (v > 900000) {
-			return $"{(v.ToFix32() / 100000).ToStringRounded(1)}M";
+		// Below 3 we can't represent the smallest k value ("1.0k" is 3 chars + k);
+		// silently clamp instead of throwing — caller likely just wants "as small as
+		// reasonable" and 3 is the floor.
+		if (maxDigits < 3) {
+			maxDigits = 3;
 		}
-		if (v > 1100) {
-			return (v / 1000000).ToString();
+
+		long limit = 1;
+		for (int i = 0; i < maxDigits; i++) {
+			limit *= 10;
 		}
-		if (v > 900) {
-			return $"{(v.ToFix32() / 100).ToStringRounded(1)}k";
+
+		// Integer tier — value already fits in the budget without a suffix.
+		if (v < limit) {
+			return v.ToString();
 		}
-		return v.ToString();
+
+		// Pick the smallest of k/M/B where the integer part of v/divisor fits.
+		int divisor;
+		string suffix;
+		if (v < limit * 1000L) {
+			divisor = 1000;
+			suffix = "k";
+		} else if (v < limit * 1000000L) {
+			divisor = 1000000;
+			suffix = "M";
+		} else {
+			divisor = 1000000000;
+			suffix = "B";
+		}
+
+		int integerPart = v / divisor;
+		int intDigits = (integerPart == 0) ? 1 : 1 + (int)System.Math.Log10(integerPart);
+		int decimals = System.Math.Max(0, maxDigits - intDigits - 1);  // -1 reserves the dot
+		if (decimals == 0) {
+			return $"{integerPart}{suffix}";
+		}
+		return $"{(v.ToFix32() / divisor).ToStringRounded(decimals)}{suffix}";
 	}
 
 	private ModuleStatus GetValueFromBuffers(Module m, ProductProto product, IEnumerable<IProductBufferReadOnly> buffers) {
@@ -2485,6 +2698,79 @@ public class Modules : ModuleGroup, IModuleGroup {
 			.AddControllerDevice()
 			.BuildAndAdd();
 
+		// Combined less/greater comparison.  Emits a tri-state result on
+		// both <b>L</b> ("Lesser") and <b>G</b> ("Greater") at once so a
+		// single module covers <, >, and == without the player chaining
+		// three separate compares.  The <b>mode</b> field picks the encoding:
+		//   0 (binary, default) → 0/1 flags                — A<B sets L=1, A>B sets G=1, equal: both 0
+		//   1 (positive)        → 0=equal, 1=match, 2=mismatch — non-negative, useful for indexing
+		//   2 (sumup)           → -1/0/+1 signed           — L = -G; sums of L+G across cells cancel on equal
+		// L and G are mirrors: in every mode L re-encodes the same state
+		// from the opposite vantage point so the player can wire whichever
+		// polarity their downstream logic prefers.
+		// Mode variants live as Python templates with `picker = True` in
+		// Custom/template.py — surfaces them in the module picker without
+		// touching C#.  See TemplateRegistrator.Register for the picker-flag
+		// dispatch; BuiltinTemplateModule for how they render.
+		registrator
+			.ModuleBuilderStart("Compare_Int_LessGreater", "Compare: A vs B", "A<>B")
+			.SetDescription("Combined less/greater compare. Drives <b>L</b> (Lesser) and <b>G</b> (Greater) at the same time so you don't need three modules to cover &lt;, &gt;, =. The <b>mode</b> field picks the encoding: 0 = binary 0/1 flags (default; L=1 when A&lt;B, G=1 when A&gt;B); 1 = positive 0/1/2 (0 = equal, 1 = own match, 2 = inverse); 2 = sumup -1/0/+1 (G is +1 when A&gt;B and -1 when A&lt;B, L is its negation). <b>field_b</b> switches <b>b</b> to a constant.")
+			.AddCategory(Category.Boolean)
+			.AddCategory(Category.Arithmetic)
+			.Width(2)
+			.AddInput("a", "A")
+			.AddInput("b", "B")
+			.AddFix32Field("b", "B", overrideInput: true)
+			.AddInt32Field("mode", "Mode", "Output encoding: 0 = binary 0/1, 1 = positive 0/1/2, 2 = sumup -1/0/+1.", 0)
+			.AddOutput("l", "L (Lesser)")
+			.AddOutput("g", "G (Greater)")
+			.Action(m => {
+				Fix32 a = m.Input["a", 0];
+				Fix32 b = m.FieldOrInput["b", 0];
+				// Sign-of-(a-b) as a tri-state, computed without subtraction
+				// so we don't pay the Fix32 arithmetic cost on every tick
+				// when a direct comparison answers the same question.
+				int state = a > b ? 1 : a < b ? -1 : 0;
+				int mode = m.Field.Integer["mode"];
+				int gValue;
+				int lValue;
+				switch (mode) {
+					case 1:
+						// Positive: 0 on equal, 1 on the output's own match
+						// (G=1 when A>B, L=1 when A<B), 2 on the inverse.
+						// Player can index a 3-cell lookup table directly.
+						gValue = state == 0 ? 0 : (state > 0 ? 1 : 2);
+						lValue = state == 0 ? 0 : (state < 0 ? 1 : 2);
+						break;
+					case 2:
+						// Sumup: G = sign(A - B), L = -G.  Lets the player
+						// drive a running accumulator that nets to zero on
+						// equal-comparison ticks.
+						gValue = state;
+						lValue = -state;
+						break;
+					default:
+						// Binary 0/1 — same shape the existing Compare_Int_*
+						// modules emit, so a player swapping in this combined
+						// module sees identical wire signals on each pin.
+						gValue = state > 0 ? 1 : 0;
+						lValue = state < 0 ? 1 : 0;
+						break;
+				}
+				m.Output["l"] = lValue.ToFix32();
+				m.Output["g"] = gValue.ToFix32();
+			})
+			.Display(m => {
+				// IntegerPart so a -1 prints as "-1", not "-0.999..." after
+				// any future Fix32-rounding regression in m.Output round-trip.
+				m.Display["l"] = m.Output["l"].IntegerPart.ToString();
+				m.Display["g"] = m.Output["g"].IntegerPart.ToString();
+			})
+			.AddDisplay("l", "L", 1)
+			.AddDisplay("g", "G", 1)
+			.AddControllerDevice()
+			.BuildAndAdd();
+
 		registrator
 			.ModuleBuilderStart("Compare_Int_Max", "Maximum: A or B", "MAX")
 			.SetDescription("Routes the larger of <b>a</b> and <b>b</b> (input or <b>field_b</b> constant when enabled) to output <b>a</b> (High) and the smaller to output <b>b</b> (Low).")
@@ -2594,7 +2880,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 
 		Action<Module> ReadSignals(int digits) {
 			return (Module m) => {
-				FMManager fmManager = GlobalDependencyResolver.Get<FMManager>();
+				FMManager fmManager = m.Controller.Resolver.Resolve<FMManager>();
 
 				bool logging = m.Field.Bool["logging"];
 				if (logging) {
@@ -2846,9 +3132,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 					return ModuleStatus.Error;
 				}
 
-				m.Output["value"] = GlobalDependencyResolver
-					.Get<VariableManager>()
-					.GetVariable(name);
+				m.Output["value"] = m.Controller.Resolver.Resolve<VariableManager>().GetVariable(name);
 				return ModuleStatus.Running;
 			})
 			.AddControllerDevice()
@@ -2881,8 +3165,7 @@ public class Modules : ModuleGroup, IModuleGroup {
 					return ModuleStatus.Error;
 				}
 
-				GlobalDependencyResolver
-					.Get<VariableManager>()
+				m.Controller.Resolver.Resolve<VariableManager>()
 					.SetVariable(name, m.FieldOrInput["value", Fix32.Zero]);
 				return ModuleStatus.Running;
 			})

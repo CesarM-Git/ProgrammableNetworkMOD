@@ -142,16 +142,18 @@ namespace ProgramableNetwork.Python
                         return (argument.value, (object)new Constructor(
                             (IArgumentValue[] args) => new ModuleConnectorProtoDefinition(
                                 (string)(args[0] is OrderedValue o0 ? o0.Value : null),
-                                (string)(args[1] is OrderedValue o1 ? o1.Value : null)
-                            ), new string[] { "id", "name" }));
+                                (string)(args[1] is OrderedValue o1 ? o1.Value : null),
+                                ExtractBoolKwarg(args, "shared", positionalIndex: 2, fallback: false)
+                            ), new string[] { "id", "name", "shared" }));
                     }
                     else if (argument.value == "Output")
                     {
                         return (argument.value, (object)new Constructor(
                             (IArgumentValue[] args) => new ModuleConnectorProtoDefinition(
                                 (string)(args[0] is OrderedValue o0 ? o0.Value : null),
-                                (string)(args[1] is OrderedValue o1 ? o1.Value : null)
-                            ), new string[] { "id", "name" }));
+                                (string)(args[1] is OrderedValue o1 ? o1.Value : null),
+                                ExtractBoolKwarg(args, "shared", positionalIndex: 2, fallback: false)
+                            ), new string[] { "id", "name", "shared" }));
                     }
                     else if (argument.value == "Display")
                     {
@@ -197,6 +199,9 @@ namespace ProgramableNetwork.Python
             else if (name == "Core.mafi")
             {
                 context["fix"] = new Constructor((args) => Expressions.__fix__(args[0].Value), new string[] { "value" });
+                context["int"] = new Constructor((args) => Expressions.__int__(args[0].Value), new string[] { "value" });
+                context["raw"] = new Constructor((args) => Expressions.__raw__(args[0].Value), new string[] { "value" });
+                context["hex"] = new Constructor((args) => Fix32.FromRaw(Expressions.__int__(args[0].Value)), new string[] { "value" });
                 context["Fix32"] = typeof(Fix32);
             }
 
@@ -237,6 +242,25 @@ namespace ProgramableNetwork.Python
             {
                 throw new System.NotImplementedException(name);
             }
+        }
+
+        // Looks for a NamedValue with the given <paramref name="key"/> name first
+        // (kwarg form: `Input("a", "A", shared=True)`), then falls back to a
+        // positional bool at <paramref name="positionalIndex"/> (positional form
+        // `Input("a", "A", True)`). Returns <paramref name="fallback"/> if neither
+        // is present or the value isn't a bool.
+        private static bool ExtractBoolKwarg(IArgumentValue[] args, string key, int positionalIndex, bool fallback)
+        {
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i] is NamedValue nv && (string)nv.Name == key && nv.Value is bool nb) {
+                    return nb;
+                }
+            }
+            if (args.Length > positionalIndex && args[positionalIndex] is OrderedValue ov && ov.Value is bool ob) {
+                return ob;
+            }
+            return fallback;
         }
     }
 }

@@ -1,9 +1,8 @@
-﻿using Mafi.Core.Mods;
+using Mafi.Core.Mods;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using Mafi.Core.Prototypes;
-using System.Threading;
 using Mafi;
 
 namespace ProgramableNetwork.Python
@@ -67,13 +66,13 @@ namespace ProgramableNetwork.Python
             string name = moduleProto.Name.ModuleId();
             ModuleProto proto = registrator.PrototypesDb.Get<ModuleProto>(new Proto.ID(name))
                 .ValueOrThrow("Missing module");
-            Module module = new Module(proto, controller.Context, controller);
+			long newId = controller.Resolver.Resolve<ModuleIdManager>().Allocate();
+            Module module = new Module(proto, controller.Context, controller, newId);
             // Position is owned by the module itself since Controller.MODULE_LAYOUT_INFO.
             module.Row = row;
             module.Column = column;
             controller.Modules.Add(module);
             controller.InvalidateModuleLookup();
-            Thread.Sleep(1);
 
             int width = module.Layout.GetWidth(module);
 			column += width;

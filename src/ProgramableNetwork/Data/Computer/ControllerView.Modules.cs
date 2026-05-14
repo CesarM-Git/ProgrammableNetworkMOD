@@ -45,6 +45,7 @@ namespace ProgramableNetwork.Ui
 
 		private bool m_pickTemplateModuleInAction;
 		private bool m_pickNewModuleInAction;
+		private bool m_settingsDialogInAction;
 
 		private static readonly Lyst<Color> m_colors;
 
@@ -86,11 +87,6 @@ namespace ProgramableNetwork.Ui
 		public Controller Entity => m_controller.Entity;
 
 		public Dictionary<long, (int x, int y)> ModulePlacementCache { get; } = new Dictionary<long, (int x, int y)>();
-		// One ModuleView per Module.Id, kept across RedrawComponents calls.  Reusing the
-		// view preserves its Observe subscriptions (status/connections/extension counts)
-		// and avoids the rebuild flicker every time a single property toggles.  Entries
-		// are pruned when the source Module disappears.
-		private readonly Dictionary<long, ModuleView> m_moduleViewCache = new Dictionary<long, ModuleView>();
 		public ControllerInspector Inspector => m_controller;
 
 		public Module LastCreated => m_lastCreated;
@@ -102,14 +98,6 @@ namespace ProgramableNetwork.Ui
 				m_controller.OutputConnection = null;
 				m_controller.EntityHighlighterSelectable.ClearAllHighlights();
 				m_updaters.Clear();
-				// The inspector is a singleton — when the player clicks a different
-				// controller, Entity changes but our cache still holds ModuleViews
-				// bound to the PREVIOUS controller's Module instances.  Copy-pasted
-				// controllers share Module.Id values, so the keyed lookup would
-				// silently return stale views that mutate the wrong controller.
-				// Flush the entire cache on every entity switch.
-				m_moduleViewCache.Clear();
-				m_colorCombinations.Clear();
 
 				if (entity != null)
 				{
@@ -347,15 +335,16 @@ namespace ProgramableNetwork.Ui
 						if (cursor + width > totalCols) {
 							width = totalCols - cursor;
 						}
-						// Reuse the cached ModuleView when present so its Observe subscriptions
-						// (status, connections, extension counts) stay live across redraws.  A
-						// fresh view is only created the first time a module appears.
-						if (!m_moduleViewCache.TryGetValue(placed.Id, out ModuleView mv) || mv == null)
-						{
-							mv = new ModuleView(placed, this, m_controller.Context, false, () => RedrawComponents(modules));
-							m_moduleViewCache[placed.Id] = mv;
-						}
-						rowElement.Add(mv);
+						// Always build a fresh ModuleView on each redraw.  An earlier
+						// caching attempt — keyed on Module.Id to preserve Observe
+						// subscriptions across redraws — handed the previous
+						// controller's ModuleView back when switching to a new
+						// controller whose modules carried colliding legacy ids
+						// (every per-controller pool started at 1), making the
+						// inspector stick on the first selected controller.  Fresh
+						// views per redraw are slightly less efficient but keep the
+						// state correct without cross-controller bleed.
+						rowElement.Add(new ModuleView(placed, this, m_controller.Context, false, () => RedrawComponents(modules)));
 						ModulePlacementCache[placed.Id] = (i, cursor);
 						cursor += width;
 					}
@@ -365,33 +354,6 @@ namespace ProgramableNetwork.Ui
 
 				// Channel row below this module row — height already sized to the lane count.
 				Add(new UiComponent().Width(rowW).Height(m_channelHeights[i + 1].px()));
-			}
-
-			// Drop cached views for modules that no longer exist on the controller.
-			// Prevents the cache from holding stale references to removed modules.
-			HashSet<long> liveIds = new HashSet<long>();
-			foreach (var m in Entity.Modules ?? new Lyst<Module>())
-			{
-				if (m != null) {
-					liveIds.Add(m.Id);
-				}
-			}
-			List<long> stale = null;
-			foreach (var kv in m_moduleViewCache)
-			{
-				if (!liveIds.Contains(kv.Key))
-				{
-					if (stale == null) {
-						stale = new List<long>();
-					}
-					stale.Add(kv.Key);
-				}
-			}
-			if (stale != null)
-			{
-				foreach (long id in stale) {
-					m_moduleViewCache.Remove(id);
-				}
 			}
 
 			RepaintLines();
@@ -1066,11 +1028,10 @@ namespace ProgramableNetwork.Ui
 			AddHelper addHelperUI = new AddHelper(() => this);
 			ModuleSlotButton button = column.AddAndReturn(new ModuleSlotButton(this, targetRow, targetColumn));
 			button.Size(Sizes.BLOCK_SIZE, Sizes.BLOCK_SIZE * 2);
-			// Hint floater (the "+ click to add" helper) is meaningful only in Add mode —
-			// returning Option.None in any other mode suppresses the popup entirely.
-			button.Floater(() => m_controller.Mode == ControllerEditMode.Add
-				? addHelperUI.Display()
-				: Option<UiComponent>.None);
+			// Hint floater (the "+ click to add" helper).  Gated on the inspector's
+			// m_showHints checkbox in the modules panel header so power users can
+			// silence every slot's hover hint at once without losing the click flow.
+			button.Floater(() => m_controller.m_showHints ? addHelperUI.Display() : Option<UiComponent>.None);
 
 			// bottom filler
 			column.AddAndReturn(new UiComponent())
@@ -1091,6 +1052,7 @@ namespace ProgramableNetwork.Ui
 
 		// Drops the inspector's picked-up module at (row, col).  Returns false if no module
 		// is picked up or the slot doesn't fit; on success clears PickedUpModule.
+		// TODO this should be a command
 		public bool TryDropPickedAt(int row, int col)
 		{
 			var inspector = m_controller;
@@ -1107,33 +1069,50 @@ namespace ProgramableNetwork.Ui
 
 		// Stamps a copy of the most-recently created/picked module at (row, col), preserving
 		// its number/field/string data so shift-paste reproduces the original's settings.
+		// TODO this should be a command
 		public bool TryShiftAddAt(int row, int col)
 		{
 			if (m_lastCreated == null) {
 				return false;
 			}
-			// Save a snapshot of the source module's data BEFORE TryPlaceAt, because
-			// TryPlaceAt creates a new Module and overwrites m_lastCreated with it.
-			// Without this, the copy loops below were iterating over the NEW (empty)
-			// module's data and writing each entry back to itself — a no-op.
+			// Capture the source BEFORE TryPlaceAt — that call constructs a new
+			// module and reassigns m_lastCreated to it, so without this local the
+			// data-copy loop below would iterate the freshly-created (empty)
+			// destination over itself and lose the original settings entirely.
 			Module source = m_lastCreated;
 			if (!TryPlaceAt(source.Prototype, row, col)) {
 				return false;
 			}
-			// m_lastCreated now points to the newly placed module.
-			Module target = m_lastCreated;
+			Module placed = m_lastCreated;
+			if (placed == source) {
+				// Defensive: TryPlaceAt should have replaced m_lastCreated with a
+				// fresh module; if it didn't, refuse to do an in-place self-write.
+				return false;
+			}
 
-			target.Prototype.ExecuteInit(target, log: false);
+			placed.Prototype.ExecuteInit(placed, log: false);
 			foreach (KeyValuePair<string, int> item in source.NumberData) {
-				target.NumberData[item.Key] = item.Value;
+				placed.NumberData[item.Key] = item.Value;
 			}
 			foreach (KeyValuePair<string, Fix32> item in source.FieldNumberData) {
-				target.FieldNumberData[item.Key] = item.Value;
+				placed.FieldNumberData[item.Key] = item.Value;
 			}
 			foreach (KeyValuePair<string, string> item in source.StringData) {
-				target.StringData[item.Key] = item.Value;
+				placed.StringData[item.Key] = item.Value;
 			}
-			target.Prototype.DisplayUpdate(target);
+			// Pin extension counts roundtrip too so a copy of an extended module
+			// keeps its width.  ArrayData (per-module Fix32 buffer) is replaced
+			// wholesale rather than per-element so a Delay/etc. module's ring
+			// buffer comes across intact.
+			placed.SetInputExtensionCount(source.InputExtensionCount);
+			placed.SetOutputExtensionCount(source.OutputExtensionCount);
+			if (source.ArrayData != null && source.ArrayData.Length > 0)
+			{
+				Fix32[] copy = new Fix32[source.ArrayData.Length];
+				System.Array.Copy(source.ArrayData, copy, copy.Length);
+				typeof(Module).GetProperty(nameof(Module.ArrayData)).SetValue(placed, copy);
+			}
+			placed.Prototype.DisplayUpdate(placed);
 			return true;
 		}
 
@@ -1143,11 +1122,29 @@ namespace ProgramableNetwork.Ui
 				return;
 			}
 			m_pickNewModuleInAction = true;
+			// Cache the picker — building the full module list is expensive
+			// (one PanelWithHeader + ModuleView per ModuleProto).  Per-row
+			// template chips refresh themselves on every show via OnShow in
+			// NewModule, so saved blueprints and reloaded Python templates
+			// surface on the next open without reconstructing the whole
+			// picker.
 			m_pickNewModule ??= new PickNewModule(NewTr.Inspector.PickModule, NewModules());
 			m_pickNewModuleInAction = false;
 			m_targetRow = row;
 			m_targetColumn = col;
 			m_pickNewModule.Open(anchor);
+		}
+
+		// Mirror of OpenAddPickerAt for the placed-module settings dialog: orchestrates
+		// the open in a single place so the click handler in ModuleView stays a thin
+		// dispatcher.  Re-entry is guarded with m_settingsDialogInAction so a second
+		// LMB on the same button while the dialog is mid-open doesn't double-fire.
+		// Unlike the picker, we don't cache the dialog instance — its UI is bound to
+		// a specific Module's fields, so a fresh dialog is built per open.
+		public void OpenSettingsAt(Module module, ButtonText anchor)
+		{
+			new ModuleEditDialog(module, this, m_controller.Context, m_controller, m_controller.Entity.Resolver)
+				.Open(anchor);
 		}
 
 		public void OpenTemplatePickerAt(int row, int col, UiComponent anchor)
@@ -1196,12 +1193,22 @@ namespace ProgramableNetwork.Ui
 
 		private IEnumerable<AModuleProtoSelector> EnumerateBlueprintSelectors()
 		{
+			// Picker can be opened on a brand-new controller before its Resolver is
+			// populated — guard explicitly instead of letting the resolve below NRE
+			// into the catch.  Returning empty silently is the right degraded-state
+			// behaviour: the regular module list still renders, blueprints just
+			// don't show up until the resolver is wired (next selection / load).
+			Mafi.DependencyResolver resolver = m_controller?.Entity?.Resolver;
+			if (resolver == null)
+			{
+				return System.Linq.Enumerable.Empty<AModuleProtoSelector>();
+			}
 			Mafi.Core.Entities.Blueprints.BlueprintsLibrary library = null;
 			Mafi.Core.Prototypes.ProtosDb protosDb = null;
 			try
 			{
-				library = ProgramableNetwork.GlobalDependencyResolver.Get<Mafi.Core.Entities.Blueprints.BlueprintsLibrary>();
-				protosDb = m_controller.Entity.Context.ProtosDb;
+				library = resolver.Resolve<Mafi.Core.Entities.Blueprints.BlueprintsLibrary>();
+				protosDb = resolver.Resolve<Mafi.Core.Prototypes.ProtosDb>();
 			}
 			catch (System.Exception e)
 			{
@@ -1262,11 +1269,13 @@ namespace ProgramableNetwork.Ui
 
 		public bool TryPlaceAt(ModuleProto moduleProto, int targetRow, int targetColumn)
 		{
-			var module = new Module(moduleProto, Entity.Context, Entity);
+			ModuleIdManager moduleIdManager = Entity.Resolver.Resolve<ModuleIdManager>();
+			var module = new Module(moduleProto, Entity.Context, Entity, moduleIdManager.Allocate());
 			var width = module.Layout.GetWidth(module);
 
 			if (!IsRangeFree(targetRow, targetColumn, width, ignore: null))
 			{
+				moduleIdManager.Free(module.Id);
 				m_controller.Context.AudioDb.InvalidOp(true).Play();
 				return false;
 			}
@@ -1274,7 +1283,6 @@ namespace ProgramableNetwork.Ui
 			module.Row = targetRow;
 			module.Column = targetColumn;
 			Entity.Modules.Add(module);
-			Entity.InvalidateModuleLookup();
 			m_lastCreated = module;
 			return true;
 		}

@@ -25,20 +25,25 @@ namespace ProgramableNetwork;
 // doesn't sprout extra bars between sections.  The layout, top to bottom:
 //
 //   ┌───────────────────────────┬─────────────────────┐
-//   │ ▢ #│ multiline TextField  │ API reference       │ ← editorRow (flex-grow 1)
-//   │   │                       │ self                │
-//   │   │                       │   self.Input        │
-//   │   │                       │   self.Output       │
-//   │   │                       │   ...               │
-//   ├───────────────────────────┴─────────────────────┤
-//   │ red error strip (collapses when empty)          │
-//   ├─────────────────────────────────────────────────┤
-//   │ tokens / status                                 │
-//   ├─────────────────────────────────────────────────┤
-//   │ tooltip strip (active identifier doc)           │
-//   ├─────────────────────────────────────────────────┤
+//   │ ▢ #│ multiline TextField  │                     │
+//   │   │                       │                     │ ← editorRow
+//   ├───────────────────────────┤ API reference       │   (flex-grow 1)
+//   │ red error strip (hidden   │ self                │
+//   │   when empty)             │   self.Input        │
+//   ├───────────────────────────┤   self.Output       │
+//   │ tokens / status           │   ...               │
+//   ├───────────────────────────┤                     │
+//   │ tooltip strip             │                     │
+//   └───────────────────────────┴─────────────────────┘
+//   ┌─────────────────────────────────────────────────┐
 //   │ [Save]   [Compile]                       [Back] │ ← footer
 //   └─────────────────────────────────────────────────┘
+//
+// editorRow holds two children: editorColumn (left, 70% width) and the
+// API reference panel (right).  The error / stats / tooltip strips live
+// INSIDE editorColumn beneath the editor box, so they stay aligned with
+// the editor's width and the API-reference column keeps full vertical
+// height.  The footer is a sibling of editorRow at body level.
 //
 // Children are added to `host.Body.RootElement` (not `host.RootElement`)
 // because the Mafi Panel's outer container has the background / border /
@@ -59,6 +64,13 @@ public class PlcPyCodeEditorWindow : Window {
 	private readonly Label m_statsLabel;
 	private readonly Label m_tooltipLabel;
 	private readonly VisualElement m_errorStrip;
+
+	// The module the editor is currently bound to.  Captured by LoadFromModule
+	// (and cleared back to null on close so a stale reference can't survive
+	// a controller swap).  Used by RefreshIdentifierTooltip to surface the
+	// runtime type of player vars under the caret without going through the
+	// scheduler closures the stats-label refresh uses.
+	private Module m_currentModule;
 
 	// IntelliSense floater state — collapsed by default; opened by '.' or
 	// Ctrl+Space.  m_floaterEntries snapshots the active completion list
@@ -85,7 +97,7 @@ public class PlcPyCodeEditorWindow : Window {
 		: base("PLC-PY: Code Editor".ToDoLoc(), addFullscreenButton: true) {
 		m_controller = controller;
 
-		WindowSize(900.px(), 90.Percent());
+		WindowSize(900.px(), 600.px());
 		MakeMovable();
 
 		// Single host panel — children go into its Body, not the outer
@@ -104,15 +116,28 @@ public class PlcPyCodeEditorWindow : Window {
 		editorRow.style.flexShrink = 1;
 		body.Add(editorRow);
 
-		// ---- Editor side -----------------------------------------------
+		// ---- Editor column ---------------------------------------------
+		// Vertical stack: the editor itself on top (flex-grows to claim the
+		// leftover height), then error / stats / tooltip strips beneath it.
+		// Putting the strips here — instead of at body level — keeps them
+		// the same width as the editor (so the API reference column on the
+		// right runs full height) and lets the editor box flex against the
+		// strips' natural heights inside the column instead of fighting
+		// them at the window level.
+		VisualElement editorColumn = new VisualElement();
+		editorColumn.style.flexDirection = FlexDirection.Column;
+		editorColumn.style.flexGrow = 1;
+		editorColumn.style.flexShrink = 1;
+		editorColumn.style.flexBasis = new StyleLength(new Length(70, LengthUnit.Percent));
+		editorRow.Add(editorColumn);
+
 		// Wrapping container so the line-numbers gutter can sit flush left
 		// of the TextField; both grow together within the editor side.
 		VisualElement editorBox = new VisualElement();
 		editorBox.style.flexDirection = FlexDirection.Row;
 		editorBox.style.flexGrow = 1;
 		editorBox.style.flexShrink = 1;
-		editorBox.style.flexBasis = new StyleLength(new Length(70, LengthUnit.Percent));
-		editorRow.Add(editorBox);
+		editorColumn.Add(editorBox);
 
 		// Line-numbers gutter — clipping container with the line-number
 		// label inside as Position.Absolute, so we can translate it
@@ -234,12 +259,17 @@ public class PlcPyCodeEditorWindow : Window {
 		// it reads as "warning" without looking alarming when small.
 		m_errorStrip = new VisualElement();
 		m_errorStrip.style.backgroundColor = new StyleColor(new UnityEngine.Color(0.45f, 0.07f, 0.07f, 0.85f));
-		m_errorStrip.style.paddingTop = 4;
-		m_errorStrip.style.paddingBottom = 4;
+		m_errorStrip.style.paddingTop = 6;
+		m_errorStrip.style.paddingBottom = 6;
 		m_errorStrip.style.paddingLeft = 8;
 		m_errorStrip.style.paddingRight = 8;
+		// Strip is a flex-shrink=0 child of the editor column: keeps its
+		// natural height (text + padding) and never compresses below it,
+		// while the editor box above absorbs all leftover vertical space.
+		m_errorStrip.style.flexShrink = 0;
+		m_errorStrip.style.minHeight = 32;
 		m_errorStrip.style.display = DisplayStyle.None;
-		body.Add(m_errorStrip);
+		editorColumn.Add(m_errorStrip);
 
 		m_errorLabel = new Label();
 		m_errorLabel.style.color = new StyleColor(UnityEngine.Color.white);
@@ -251,9 +281,11 @@ public class PlcPyCodeEditorWindow : Window {
 		m_statsLabel.style.color = new StyleColor(new UnityEngine.Color(0.7f, 0.7f, 0.7f, 1f));
 		m_statsLabel.style.paddingLeft = 8;
 		m_statsLabel.style.paddingRight = 8;
-		m_statsLabel.style.paddingTop = 2;
-		m_statsLabel.style.paddingBottom = 2;
-		body.Add(m_statsLabel);
+		m_statsLabel.style.paddingTop = 4;
+		m_statsLabel.style.paddingBottom = 4;
+		m_statsLabel.style.flexShrink = 0;
+		m_statsLabel.style.minHeight = 24;
+		editorColumn.Add(m_statsLabel);
 
 		// ---- IntelliSense floater ---------------------------------------
 		// Absolute-positioned popup that appears below the line containing
@@ -324,11 +356,15 @@ public class PlcPyCodeEditorWindow : Window {
 		m_tooltipLabel.style.color = new StyleColor(new UnityEngine.Color(0.85f, 0.85f, 0.55f, 1f));
 		m_tooltipLabel.style.paddingLeft = 8;
 		m_tooltipLabel.style.paddingRight = 8;
-		m_tooltipLabel.style.paddingTop = 2;
-		m_tooltipLabel.style.paddingBottom = 2;
-		m_tooltipLabel.style.minHeight = 18;
-		m_tooltipLabel.style.whiteSpace = WhiteSpace.NoWrap;
-		body.Add(m_tooltipLabel);
+		m_tooltipLabel.style.paddingTop = 4;
+		m_tooltipLabel.style.paddingBottom = 4;
+		m_tooltipLabel.style.flexShrink = 0;
+		// Allow wrapping so longer doc strings (e.g. for `return
+		// ModuleStatus.X`) flow onto a second line instead of being
+		// clipped at the right edge of the editor column.
+		m_tooltipLabel.style.minHeight = 28;
+		m_tooltipLabel.style.whiteSpace = WhiteSpace.Normal;
+		editorColumn.Add(m_tooltipLabel);
 
 		// ---- Footer ------------------------------------------------------
 		// Mafi's `PanelFooterRow` — a proper Mafi component with the
@@ -443,8 +479,20 @@ public class PlcPyCodeEditorWindow : Window {
 			SetTooltipText("");
 			return;
 		}
+		// Live runtime type for player vars — checked first so a player who
+		// hovers an `x = fix(5)` they wrote sees `x: Fix32 = 5` without the
+		// static doc table getting in the way (the table only knows
+		// well-known names).  Falls through to docs when the var is unknown
+		// or the module isn't bound, so the existing help still surfaces.
+		string runtimeInfo = LookupRuntimeType(ident);
 		if (PlcPySyntax.Docs.TryGetValue(ident, out string doc)) {
-			SetTooltipText(ident + " — " + doc);
+			SetTooltipText(runtimeInfo != null
+				? ident + ": " + runtimeInfo + " — " + doc
+				: ident + " — " + doc);
+			return;
+		}
+		if (runtimeInfo != null) {
+			SetTooltipText(ident + ": " + runtimeInfo);
 			return;
 		}
 		int dot = ident.LastIndexOf('.');
@@ -457,6 +505,80 @@ public class PlcPyCodeEditorWindow : Window {
 			dot = parent.LastIndexOf('.');
 		}
 		SetTooltipText("");
+	}
+
+	// "type[ = value]" string for a bare identifier currently in PlcContext,
+	// or null if we can't resolve it (no module bound, no entry, dotted
+	// path).  Type names mirror what a Python author expects rather than
+	// the C# class name (Fix32 stays Fix32; Method renders as "function";
+	// raw List/Dict become "list"/"dict").  Primitive values are inlined
+	// so the player can also see what's stored without inspecting state
+	// elsewhere; complex objects stay just-a-type to keep the strip short.
+	private string LookupRuntimeType(string ident) {
+		if (m_currentModule == null || string.IsNullOrEmpty(ident)) {
+			return null;
+		}
+		// Only resolve bare names — dotted paths (self.Input.A, range(10).Stop)
+		// would need a full expression evaluator.  Handled by the existing
+		// dotted-prefix doc fallback.
+		if (ident.IndexOf('.') >= 0) {
+			return null;
+		}
+		Mafi.Collections.Dict<string, object> ctx = m_currentModule.PlcContext;
+		if (ctx == null || !ctx.TryGetValue(ident, out object value)) {
+			return null;
+		}
+		return DescribePlcValue(value);
+	}
+
+	private static string DescribePlcValue(object value) {
+		if (value is null) {
+			return "None";
+		}
+		if (value is bool b) {
+			return "bool = " + (b ? "True" : "False");
+		}
+		if (value is int i) {
+			return "int = " + i;
+		}
+		if (value is float f) {
+			return "float = " + f;
+		}
+		if (value is double d) {
+			return "float = " + d;
+		}
+		if (value is long l) {
+			return "int = " + l;
+		}
+		if (value is Mafi.Fix32 fix) {
+			return "Fix32 = " + fix.ToFloat();
+		}
+		if (value is string s) {
+			string preview = s.Length > 32 ? s.Substring(0, 32) + "…" : s;
+			return "str = \"" + preview + "\"";
+		}
+		if (value is ProgramableNetwork.Python.Method) {
+			return "function";
+		}
+		if (value is ProgramableNetwork.Python.Class) {
+			return "class";
+		}
+		if (value is ProgramableNetwork.Python.Constructor) {
+			return "builtin";
+		}
+		if (value is ProgramableNetwork.Python.RangeIterable r) {
+			return "range(" + r.Start + ", " + r.Stop + ", " + r.Step + ")";
+		}
+		if (value is System.Type t) {
+			return "type[" + t.Name + "]";
+		}
+		if (value is System.Collections.IDictionary dict) {
+			return "dict[" + dict.Count + "]";
+		}
+		if (value is System.Collections.ICollection col) {
+			return "list[" + col.Count + "]";
+		}
+		return value.GetType().Name;
 	}
 
 	private void SetTooltipText(string text) {
@@ -923,6 +1045,7 @@ public class PlcPyCodeEditorWindow : Window {
 	// polling every tick.
 	public void LoadFromModule(Module module) {
 		CloseFloater();
+		m_currentModule = module;
 		string current = module?.Field["code", ""] ?? "";
 		m_codeEditor.Text = current;
 		UpdateLineNumbers(current);
@@ -934,7 +1057,17 @@ public class PlcPyCodeEditorWindow : Window {
 			return;
 		}
 
-		m_statsLabel.text = "Tokens: " + module.LexerNodeCount;
+		RefreshStatsLabel(module);
+		// Schedule a periodic refresh of the stats label (only) so the
+		// player sees live timing while tuning the script — every 500 ms
+		// is well below the perceptual threshold and reads two int dict
+		// entries per fire.  Doesn't touch the editor / floater / error
+		// strip, so it doesn't fight the "editor is independent of the
+		// module after open" behaviour the rest of LoadFromModule
+		// preserves.
+		m_statsLabel.schedule
+			.Execute(() => RefreshStatsLabel(module))
+			.Every(500);
 		string compileError = module.StringData.TryGetValue("__compile_error", out string ce) ? ce : null;
 		string runError = module.StringData.TryGetValue("__run_error", out string re) ? re : null;
 		if (!string.IsNullOrEmpty(compileError)) {
@@ -944,6 +1077,29 @@ public class PlcPyCodeEditorWindow : Window {
 		} else {
 			HideError();
 		}
+	}
+
+	// Renders the live timing snapshot ("Tokens: T  |  S stmts, C calls,
+	// U µs / B budget") into the stats label.  Pulls everything from
+	// NumberData so the values survive saves and reloads — the runtime
+	// updates them on every tick via PlcPy.RecordTiming.  Falls back to
+	// a tokens-only line for fresh modules that haven't ticked yet.
+	private void RefreshStatsLabel(Module module) {
+		if (module == null) {
+			m_statsLabel.text = "(no module bound)";
+			return;
+		}
+		System.Text.StringBuilder sb = new System.Text.StringBuilder();
+		sb.Append("Tokens: ").Append(module.LexerNodeCount);
+		// Wall-clock cost of the last tick — written by PlcPy.RecordTiming
+		// and persisted via NumberData so the value survives saves and is
+		// the same number the inspector / runtime sees.  Absent on fresh
+		// modules that haven't ticked yet; we leave the line off in that
+		// case rather than show "0 µs" that misleads the player.
+		if (module.NumberData.TryGetValue("__last_us", out int us)) {
+			sb.Append("  |  ").Append(us).Append(" µs");
+		}
+		m_statsLabel.text = sb.ToString();
 	}
 
 	// Intercept Escape + swallow Mafi's poll-based input dispatch while
@@ -972,47 +1128,38 @@ public class PlcPyCodeEditorWindow : Window {
 		return base.InputUpdate();
 	}
 
-	// Whitelist of keycodes the editor owns while focused — listed
-	// explicitly (rather than `Input.anyKey`) so it's obvious which
-	// game bindings we're stealing and which we leave alone.  Escape
-	// is intentionally absent: we want it to reach Mafi so a player
-	// without an open floater can close the editor with it.  Modifier
-	// keys (Shift / Ctrl / Alt) are also absent because they're not
-	// game bindings on their own — they only matter as part of a
-	// combo, and the combo's other key (a letter, an arrow, etc.) is
-	// what we consume.
-	private static readonly UnityEngine.KeyCode[] EDITOR_OWNED_KEYS = new[] {
-		// Whitespace + control keys the editor uses for editing.
-		UnityEngine.KeyCode.Space,
-		UnityEngine.KeyCode.Tab,
-		UnityEngine.KeyCode.Return,
-		UnityEngine.KeyCode.KeypadEnter,
-		UnityEngine.KeyCode.Backspace,
-		UnityEngine.KeyCode.Delete,
-		// Caret nav.
-		UnityEngine.KeyCode.LeftArrow,
-		UnityEngine.KeyCode.RightArrow,
-		UnityEngine.KeyCode.UpArrow,
-		UnityEngine.KeyCode.DownArrow,
-		UnityEngine.KeyCode.Home,
-		UnityEngine.KeyCode.End,
-		UnityEngine.KeyCode.PageUp,
-		UnityEngine.KeyCode.PageDown,
-	};
-
-	// Returns true if any keycode the editor cares about is currently
-	// pressed.  Cheap (linear scan over ~14 codes); runs once per tick
-	// only while the editor is focused.  Letter / digit / symbol keys
-	// don't need explicit entries because Mafi's toolbar shortcuts only
-	// fire on Input.anyKeyDown (handled in the per-controller dispatch
-	// loop) and BlockShortcuts in EDITOR_CONFIG already prevents that
-	// from looping into our controller.
+	// While the editor has focus, the editor owns *every* key except
+	// Escape.  Earlier we tried a per-keycode whitelist (Space, Tab,
+	// arrows, Backspace, ...), reasoning that BlockShortcuts in
+	// EDITOR_CONFIG already prevented Mafi's letter / digit toolbar
+	// bindings from firing through our controller.  In practice that
+	// wasn't enough — Ctrl+V (and a few bare letter keys like V for
+	// satellite view) still triggered global Mafi actions that
+	// deactivated our controller and closed the editor mid-paste.
+	//
+	// Catching everything is safer than chasing each missing combo:
+	//   - The actual text input doesn't go through this poll-based
+	//     path; it arrives via UIElements' KeyDownEvent, which the
+	//     editor handles directly on its own VisualElement.  So
+	//     "consume in the poll loop" doesn't break typing — typing
+	//     was never going through the poll loop in the first place.
+	//   - Mafi has no bare-modifier bindings (Ctrl / Alt / Shift on
+	//     their own do nothing), so consuming those is a no-op.
+	//   - Escape is the one key we DO want to leak through, so the
+	//     player can close the window when no floater is open.  The
+	//     `m_floaterOpen && Escape` short-circuit at the top of
+	//     InputUpdate handles the floater-close case before we get
+	//     to this gate, so leaking Escape past it is intentional.
 	private static bool IsEditorOwnedKeyDown() {
-		for (int i = 0; i < EDITOR_OWNED_KEYS.Length; i++) {
-			if (UnityEngine.Input.GetKey(EDITOR_OWNED_KEYS[i])) {
-				return true;
-			}
+		if (!UnityEngine.Input.anyKey) {
+			return false;
 		}
-		return false;
+		// Single carve-out: Escape reaches Mafi so the controller's
+		// standard close-on-escape path fires when the player wants
+		// to dismiss the editor.
+		if (UnityEngine.Input.GetKey(UnityEngine.KeyCode.Escape)) {
+			return false;
+		}
+		return true;
 	}
 }

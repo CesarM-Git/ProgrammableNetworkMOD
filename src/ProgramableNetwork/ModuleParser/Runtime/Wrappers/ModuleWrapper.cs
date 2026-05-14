@@ -299,6 +299,26 @@ namespace ProgramableNetwork.Python
                 module.Array[idx] = value;
             }
 
+            // Indexer plumbing so the player can write `self.Array[i]` /
+            // `self.Array[i] = v` instead of the .get(i, default) / .set(i, v)
+            // pair.  Mirrors NumberDataSetter / StringDataSetter, which already
+            // expose this pattern; without it, IndexExpression on self.Array
+            // falls through to Expressions.__getitem__ and lands in the
+            // "NotImplementedException" branch even though the underlying
+            // Module.Array supports indexed access perfectly well.  Reads
+            // out-of-range return Fix32.Zero (same default the existing .get
+            // overload uses when the player doesn't pass one); writes route
+            // through the Module.Array setter which already handles auto-grow.
+            public Fix32 __getitem__(object key)
+            {
+                return module.Array[Expressions.__int__(key), Fix32.Zero];
+            }
+
+            public void __setitem__(object key, object value)
+            {
+                module.Array[Expressions.__int__(key)] = Expressions.__fix__(value);
+            }
+
             public void resize(int size)
             {
                 module.Array.Resize(size);
@@ -428,7 +448,8 @@ namespace ProgramableNetwork.Python
         public int display_extension_count => module.DisplayExtensionCount;
         public int effective_input_count =>
             (module.Prototype?.Inputs?.Count ?? 0)
-            + System.Math.Min(module.InputExtensionCount, module.Prototype?.MaxInputExtensions ?? 0);
+            + System.Math.Min(module.InputExtensionCount, module.Prototype?.MaxInputExtensions ?? 0)
+            + (module.Prototype?.InputsTrailing?.Count ?? 0);
         public int effective_output_count =>
             (module.Prototype?.Outputs?.Count ?? 0)
             + System.Math.Min(module.OutputExtensionCount, module.Prototype?.MaxOutputExtensions ?? 0);
@@ -449,10 +470,18 @@ namespace ProgramableNetwork.Python
             }
             int extIdx = idx - staticCount;
             int activeExt = System.Math.Min(module.InputExtensionCount, module.Prototype.MaxInputExtensions);
-            if (extIdx >= activeExt) {
-                return "";
+            if (extIdx < activeExt) {
+                return module.Prototype.InputExtensions[extIdx].Id;
             }
-            return module.Prototype.InputExtensions[extIdx].Id;
+            // Trailing pins are appended after the active extensions so Python
+            // code iterating effective_input_id sees them at the far end —
+            // matches the visual pin order.
+            int trailIdx = extIdx - activeExt;
+            var trailings = module.Prototype.InputsTrailing;
+            if (trailings != null && trailIdx < trailings.Count) {
+                return trailings[trailIdx].Id;
+            }
+            return "";
         }
 
         public string effective_output_id(int idx)
