@@ -101,6 +101,20 @@ In-progress dev saves existed at v7 that had been written with **only** two exte
 
 The pattern: **bump the constant, write the new stamp, gate the new read**.
 
+### Sharper rule when merging upstream
+
+The corollary that bit us hard on May 14 2026: **the value of a serialization version is a primary key into the on-disk save format**. Once your fork ships saves stamped at value N, that number is permanently bound to whatever payload shape you shipped at the time. If you then merge upstream and they happen to have used the same value N for a different payload (a new write, a new gated read), every prior fork save misaligns silently.
+
+The fork-vs-upstream incident: both sides defined Controller version `6` (`CONTROLLER_UNIQUE_MODULE_IDS` in HEAD, `CONTROLLER_MODULE_ID_POOL` in upstream) with different trailing payloads. Resolving the conflict by picking upstream's name made all v6 fork saves unreadable — the dict-init-after-load reported 35 fake duplicate entity IDs and 45K orphaned terrain warnings, all artifacts of an 8-byte stream shift starting at the `m_nextModuleId` read upstream added.
+
+Rules:
+
+- When merging upstream, audit every `const int *_VERSION* = N` that appears on both sides. If both branches use the same value with different surrounding `Write*` / `Read*` calls between writes of N and writes of N+1, you have a payload conflict.
+- The fix is always to **bump the number on the new-payload side**, introduce a new constant, gate the new field's read on it, and stamp new saves at the new value. Saves at the old value keep loading because they skip the new read.
+- Never resolve a "two branches added the same version number" conflict by renaming the constant alone. The number is what matters, not the name.
+
+The full general-pattern writeup lives at `../../../.claude/serialization-versions.md` (relative to this mod's `.claude/`).
+
 ## Module.DeserializeData — real annotated excerpt
 
 ```csharp

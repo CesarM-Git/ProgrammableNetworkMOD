@@ -146,8 +146,15 @@ public partial class ControllerInspector : BaseInspector<Controller>, ISelection
 		incBtn.ObserveEnabled(() => Entity.DelayBetweenTicks > 0);
 		speedControl.Row.Add(speedLabel, decBtn, incBtn);
 
+		// BaseInspector's ctor already added Status as the first child of StatusRow
+		// (see Mafi.Unity.Ui.Library.Inspectors.BaseInspector — `StatusRow = new Row { Status }`),
+		// so we MUST NOT re-add it here.  The Mafi UiToolkit's parent-attachment
+		// check fires `E ... Child is already attached to a different parent.` on
+		// any duplicate Add, and the params-array overload aborts the whole batch
+		// at that point — meaning the rest of the row (spacer, label, bar,
+		// speedControl) would silently fail to attach.  We append after Status
+		// instead.
 		StatusRow.Add(
-			Status,
 			new UiComponent().Fill(),
 			new Label()
 				.LaterText(() => NewTr.Inspector.ComputingSpeed, this)
